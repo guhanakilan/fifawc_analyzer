@@ -31,6 +31,10 @@ PRIMARY_METRIC_CHOICES = ("f1", "recall", "precision", "auc", "pr_auc", "balance
 
 # Proposed only. Stage 6 requires these to be reviewed and saved by a named
 # approver before any recommendation is issued.
+# Every field GateConfig accepts must appear here. A field missing from the
+# proposal renders as an empty control while the backend quietly applies its own
+# default, so the user is shown one rule and given another.
+# `test_proposed_gate_covers_every_gate_field` keeps the two in step.
 PROPOSED_GATE = {
     "primary_metric": "f1",
     "min_primary_improvement_pct": 1.0,
@@ -40,6 +44,8 @@ PROPOSED_GATE = {
     "max_historical_primary_regression_pct": 1.0,
     "require_backtest_pass": True,
     "require_package_validation": True,
+    "segment_column": "SubTask",
+    "min_segment_rows": 100,
     "approved": False,
 }
 

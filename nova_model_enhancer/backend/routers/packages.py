@@ -9,7 +9,16 @@ from pathlib import Path
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from ..config import MAX_ZIP_BYTES, job_dir
-from ..database import create_job, get_job, list_jobs, record_audit, update_job
+from ..database import (
+    create_job,
+    get_decision,
+    get_job,
+    get_training_assets,
+    list_exports,
+    list_jobs,
+    record_audit,
+    update_job,
+)
 from ..schemas import CompatibilityRequest
 from ..services.champion import ChampionLoadError, load_champion
 from ..services.package_validator import (
@@ -155,3 +164,45 @@ def compatibility_check(job_id: str, request: CompatibilityRequest):
         result,
     )
     return result
+
+
+@router.get("/jobs/{job_id}/progress")
+def job_progress(job_id: str):
+    """What has actually been completed for this job, read from durable state.
+
+    The UI derives which stages are reachable from this rather than from what it
+    happens to have in memory, so a browser refresh does not re-lock stages the
+    user already finished.
+    """
+    job = require_job(job_id)
+    assets = get_training_assets(job_id)
+    snapshot = get_decision(job_id, "active_snapshot")
+    weights = get_decision(job_id, "weight_strategy")
+    ml_tag = get_decision(job_id, "ml_tag")
+
+    runs_dir = job_dir(job_id) / "runs"
+    runs = (
+        sorted((p.parent.name for p in runs_dir.glob("*/run_results.json")), reverse=True)
+        if runs_dir.is_dir() else []
+    )
+    approved_run = next(
+        (
+            run_id for run_id in runs
+            if (get_decision(job_id, f"approval_{run_id}") or {}).get("value", {}).get("decision")
+            == "APPROVED"
+        ),
+        None,
+    )
+
+    return {
+        "job_id": job_id,
+        "package_valid": bool(job["validation"].get("valid")),
+        "data_uploaded": bool(assets),
+        "snapshot_id": snapshot["value"] if snapshot else None,
+        "weights_approved": weights is not None,
+        "run_id": runs[0] if runs else None,
+        "run_count": len(runs),
+        "approved_run_id": approved_run,
+        "ml_tag_approved": ml_tag is not None,
+        "export_count": len(list_exports(job_id)),
+    }

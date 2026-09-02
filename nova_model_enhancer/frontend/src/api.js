@@ -55,6 +55,7 @@ export const api = {
 
   jobs: () => request("/api/packages/jobs"),
   job: (jobId) => request(`/api/packages/jobs/${jobId}`),
+  jobProgress: (jobId) => request(`/api/packages/jobs/${jobId}/progress`),
   uploadPackage: (file) => {
     const form = new FormData();
     form.append("file", file);

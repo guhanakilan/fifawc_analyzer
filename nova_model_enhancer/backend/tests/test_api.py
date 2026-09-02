@@ -289,3 +289,57 @@ def test_scrub_removes_paths_but_keeps_the_reason():
     scrubbed = scrub("Parquet magic bytes not found in /home/u/workspace/jobs/X/datasets/D.parquet")
     assert "workspace" not in scrubbed
     assert "Parquet magic bytes not found" in scrubbed
+
+
+# ── Reachability must survive a refresh ──────────────────────────────────────
+
+def test_job_progress_reports_durable_state(client, champion_export):
+    """The sidebar derives reachability from this, so it must reflect the
+    workspace rather than whatever a browser session happens to remember."""
+    import io
+
+    with champion_export["zip_path"].open("rb") as handle:
+        job_id = client.post(
+            "/api/packages/upload",
+            files={"file": ("plc984.zip", handle, "application/zip")},
+        ).json()["job_id"]
+
+    fresh = client.get(f"/api/packages/jobs/{job_id}/progress").json()
+    assert fresh["package_valid"] is True
+    assert fresh["data_uploaded"] is False
+    assert fresh["snapshot_id"] is None
+    assert fresh["weights_approved"] is False
+    assert fresh["run_id"] is None
+    assert fresh["approved_run_id"] is None
+    assert fresh["ml_tag_approved"] is False
+
+    buffer = io.BytesIO()
+    champion_export["raw"].to_parquet(buffer, index=False)
+    buffer.seek(0)
+    client.post(
+        f"/api/training-data/{job_id}/upload",
+        files={"file": ("d.parquet", buffer, "application/octet-stream")},
+        data={"role": "combined"},
+    )
+    client.post(f"/api/readiness/{job_id}/decisions", json={
+        "date_column": "UpdatedDateTimeGMT", "target_mode": "derive_from_subtask",
+        "dedup_mode": "full_row",
+        "subtask_mappings": [
+            {"name": name, "flag": flag} for name, flag in fixtures.SUBTASKS.items()
+        ],
+        "subtask_keywords": fixtures.KEYWORDS, "approver": "tester",
+    })
+    client.post(f"/api/readiness/{job_id}/snapshot")
+    client.post(f"/api/weights/{job_id}/approve",
+                json={"strategy": {"enabled": False}, "approver": "tester"})
+
+    after = client.get(f"/api/packages/jobs/{job_id}/progress").json()
+    assert after["data_uploaded"] is True
+    assert after["snapshot_id"], "a built snapshot must be reported"
+    assert after["weights_approved"] is True, (
+        "an approved weight strategy must unlock training after a refresh"
+    )
+
+
+def test_job_progress_for_an_unknown_job_is_a_404(client):
+    assert client.get("/api/packages/jobs/RETRAIN_NOPE/progress").status_code == 404

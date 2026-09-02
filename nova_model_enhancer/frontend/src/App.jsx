@@ -69,6 +69,30 @@ function Workbench() {
   const [restoring, setRestoring] = React.useState(true);
   const [restoreError, setRestoreError] = React.useState(null);
 
+  const mark = React.useCallback((key, value) => {
+    setProgress((current) => ({ ...current, [key]: value }));
+  }, []);
+
+  /** Replace in-memory progress with what the backend actually recorded.
+   *
+   * Reachability must survive a refresh: deriving it only from stages this
+   * browser happened to visit re-locks work the user already finished. */
+  const syncProgress = React.useCallback(async (jobId) => {
+    try {
+      const state = await api.jobProgress(jobId);
+      setProgress({
+        dataUploaded: state.data_uploaded,
+        snapshotId: state.snapshot_id,
+        weightsApproved: state.weights_approved,
+        runId: state.run_id,
+        approvedRunId: state.approved_run_id,
+        mlTagApproved: state.ml_tag_approved,
+      });
+    } catch {
+      /* leave whatever this session has already established */
+    }
+  }, []);
+
   // ── Restore the active job after a refresh ────────────────────────────────
   React.useEffect(() => {
     let live = true;
@@ -91,6 +115,7 @@ function Workbench() {
         setJob(restored);
         const fromHash = window.location.hash.replace("#", "");
         if (STAGES.some((s) => s.id === fromHash)) setStage(fromHash);
+        return syncProgress(restored.job_id);
       })
       .catch((error) => {
         if (!live) return;
@@ -108,7 +133,7 @@ function Workbench() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [syncProgress]);
 
   // ── Keep the URL and storage in step with the active job and stage ────────
   React.useEffect(() => {
@@ -123,10 +148,6 @@ function Workbench() {
     url.hash = stage;
     window.history.replaceState(null, "", url);
   }, [job, stage]);
-
-  const mark = React.useCallback((key, value) => {
-    setProgress((current) => ({ ...current, [key]: value }));
-  }, []);
 
   const startOver = () => {
     try {
@@ -156,7 +177,10 @@ function Workbench() {
   }, 0);
 
   const definition = STAGES.find((s) => s.id === stage) || STAGES[0];
-  const stageProps = { job, setJob, progress, mark, go: setStage };
+  const stageProps = {
+    job, setJob, progress, mark, go: setStage,
+    refreshProgress: () => job && syncProgress(job.job_id),
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "var(--nova-view-bg)" }}>

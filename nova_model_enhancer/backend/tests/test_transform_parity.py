@@ -367,3 +367,23 @@ def test_date_detection_follows_candidate_priority_not_column_order():
     assert ordered[0] == "UpdatedDateTimeGMT", (
         "the split must default to the update timestamp, not the first date-like column"
     )
+
+
+def test_proposed_gate_covers_every_gate_field():
+    """The proposal the UI pre-fills must offer every rule the backend applies.
+
+    A field present in GateConfig but absent from PROPOSED_GATE renders as an
+    empty control while the backend applies its own default — the user is shown
+    one rule and given another.
+    """
+    from nova_model_enhancer.backend.schemas import GateConfig
+    from nova_model_enhancer.backend.services.evaluator import PROPOSED_GATE
+
+    schema_fields = set(GateConfig.model_fields)
+    proposed_fields = set(PROPOSED_GATE) - {"approved"}
+    assert schema_fields == proposed_fields, (
+        f"missing from PROPOSED_GATE: {sorted(schema_fields - proposed_fields)}; "
+        f"unknown to GateConfig: {sorted(proposed_fields - schema_fields)}"
+    )
+    # And the proposed values must actually validate.
+    GateConfig(**{k: v for k, v in PROPOSED_GATE.items() if k != "approved"})
