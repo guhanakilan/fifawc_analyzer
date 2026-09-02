@@ -326,3 +326,71 @@ def test_unsafe_identifiers_are_refused(bad):
 ])
 def test_filenames_are_reduced_to_a_safe_basename(raw, expected):
     assert safe_filename(raw) == expected
+
+
+# ── Label coercion across dtypes ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("values,dtype_note", [
+    ([0, 1, 0, 1], "int64"),
+    ([0.0, 1.0, 0.0, 1.0], "float64 — the case a null anywhere in the column produces"),
+    (["0", "1", "0", "1"], "string"),
+])
+def test_existing_label_column_is_accepted_whatever_its_dtype(tmp_path, values, dtype_note):
+    """A float label column must not be rejected just for rendering as '0.0'."""
+    frame = _frame(4)
+    frame["Label"] = values
+    path = tmp_path / f"labels_{dtype_note[:5]}.parquet"
+    frame.to_parquet(path, index=False)
+
+    manifest = snapshot_service.build_snapshot(
+        [("combined", path)],
+        _decisions(
+            target_mode="existing", target_column="Label",
+            target_encoding={"voice_values": ["0"], "non_voice_values": ["1"]},
+        ),
+        tmp_path / f"snaps_{dtype_note[:5]}", "SNAP_DTYPE", {},
+    )
+    assert manifest["row_counts"]["final"] == 4
+    assert manifest["target"]["distribution"] == {"0": 2, "1": 2}
+
+
+def test_unrecognised_label_values_are_named_in_the_error(tmp_path):
+    frame = _frame(3)
+    frame["Label"] = ["0", "1", "maybe"]
+    path = tmp_path / "bad_labels.parquet"
+    frame.to_parquet(path, index=False)
+    with pytest.raises(snapshot_service.SnapshotError, match="maybe"):
+        snapshot_service.build_snapshot(
+            [("combined", path)],
+            _decisions(
+                target_mode="existing", target_column="Label",
+                target_encoding={"voice_values": ["0"], "non_voice_values": ["1"]},
+            ),
+            tmp_path / "snaps_bad", "SNAP_BADLBL", {},
+        )
+
+
+def test_an_encoding_that_maps_a_value_to_both_classes_is_refused(tmp_path):
+    frame = _frame(2)
+    frame["Label"] = ["0", "1"]
+    path = tmp_path / "amb.parquet"
+    frame.to_parquet(path, index=False)
+    with pytest.raises(snapshot_service.SnapshotError, match="both classes"):
+        snapshot_service.build_snapshot(
+            [("combined", path)],
+            _decisions(
+                target_mode="existing", target_column="Label",
+                target_encoding={"voice_values": ["0", "1"], "non_voice_values": ["1"]},
+            ),
+            tmp_path / "snaps_amb", "SNAP_AMB", {},
+        )
+
+
+def test_canonical_label_normalises_equivalent_renderings():
+    from nova_model_enhancer.backend.services.snapshot import _canonical_label
+
+    assert _canonical_label(0) == _canonical_label(0.0) == _canonical_label("0") == _canonical_label("0.0")
+    assert _canonical_label(1) == _canonical_label(1.0) == "1"
+    assert _canonical_label(True) == "true"
+    assert _canonical_label("Voice") == "voice"
+    assert _canonical_label(None) == ""

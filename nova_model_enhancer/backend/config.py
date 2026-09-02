@@ -47,6 +47,28 @@ DEV_ORIGINS = [
     "http://127.0.0.1:5174",
 ]
 
+# Optional path to the reference nova-ml scoring client. When present, Stage 7
+# additionally runs the built package through the *verbatim* reference loader
+# and records the outcome as evidence, so the defects documented in
+# IMPLEMENTATION_GAP_ANALYSIS.md stay visible instead of being papered over.
+REFERENCE_SCORING_ENV = "NOVA_ENHANCER_REFERENCE_SCORING"
+
+
+def reference_scoring_path() -> Path | None:
+    """Resolve the verbatim reference scoring client, if it has been provided."""
+    configured = os.environ.get(REFERENCE_SCORING_ENV)
+    candidates = [Path(configured)] if configured else []
+    # Conventional locations, checked only when the variable is unset.
+    candidates += [
+        APP_ROOT / "reference" / "scoring_client" / "scoring.py",
+        APP_ROOT.parent / "reference" / "scoring_client" / "scoring.py",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
 APP_VERSION = "1.0.0"
 PIPELINE_VERSION = 2   # matches nova-ml pipeline_version.json (bucket/grouping included)
 

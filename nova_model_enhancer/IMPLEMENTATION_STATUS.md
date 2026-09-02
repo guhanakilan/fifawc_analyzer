@@ -1,6 +1,6 @@
 # Implementation Status
 
-Version 1.0.0. Verified on the synthetic PLC 984 fixture; a real pilot run is still
+Version 1.1.0. Verified on the synthetic PLC 984 fixture; a real pilot run is still
 outstanding pending the inputs in §3.
 
 ## 1. Stage-by-stage
@@ -15,8 +15,9 @@ outstanding pending the inputs in §3.
 | 06 Comparison & approval | Complete | gate tests + end-to-end journey |
 | 07 Export & validation | Complete | package smoke test + browser run |
 
-**Tests:** 103 passing (`pytest backend/tests -q`, 18.6 s).
-**Frontend build:** clean (`npm run build`, 38 modules).
+**Tests:** 117 passing + 1 skipped (`pytest backend/tests -q`, ~21 s). The skip is the
+reference-defect evidence test, which runs only when the reference tree is provided.
+**Frontend build:** clean (`npm run build`, 442 modules).
 **Browser run:** all seven stages driven through Chromium against the real backend,
 zero page errors, including a mid-flow refresh that restored the active job.
 
@@ -83,6 +84,17 @@ verified run (300-row sample):
 | `ml_tag` inversion | matches the approved convention |
 
 A package that fails any blocking check is deleted, not published.
+
+## 5a. Guards added after the first review
+
+| Guard | Why |
+|---|---|
+| Model output cannot silently become the label | `ml_tag`, `VoiceNonVoiceFlag` and `NovaProbability` are written by a scoring run. Selecting one as the training label is blocked (409) unless a person explicitly acknowledges the rows were human-verified after scoring. Without this, the challenger learns to agree with the champion and every later metric measures agreement, not accuracy. |
+| Label dtype cannot change what a value means | A label column that is float (which any column that ever held a null becomes) rendered as `"0.0"`, never matched an approved encoding of `"0"`, and the snapshot rejected every row of valid data. Values are now canonicalised before comparison. |
+| An ambiguous encoding is refused | Mapping the same value to both Voice and Non-Voice is now an error rather than a silent last-writer-wins. |
+| Errors do not leak the workspace layout | Library exceptions embed the file they were reading. Paths are scrubbed from anything that reaches the UI, keeping the actionable reason. |
+| Unrecognised label values are named | The error now lists the offending values instead of only counting them. |
+| Reference-loader evidence is runnable | `NOVA_ENHANCER_REFERENCE_SCORING` points Stage 07 at the verbatim nova-ml client; its result is recorded in the validation report as non-blocking evidence. |
 
 ## 6. Known limitations
 

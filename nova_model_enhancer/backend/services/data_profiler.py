@@ -20,6 +20,17 @@ DATE_CANDIDATES = [
     "MLFlagDate", "CreatedDate", "DOSFrom",
 ]
 TARGET_CANDIDATES = ["NonVoiceFlag", "ml_tag", "VoiceNonVoiceFlag", "Target", "Label"]
+
+# Columns that a NoVA scoring run *writes*. Training on one of these would feed
+# the model its own predictions as ground truth, which the project constraints
+# forbid outright. They stay in TARGET_CANDIDATES so they are still detected and
+# named, but choosing one requires an explicit, recorded acknowledgement.
+MODEL_OUTPUT_COLUMNS = ["ml_tag", "VoiceNonVoiceFlag", "NovaProbability"]
+
+
+def is_model_output(column: str) -> bool:
+    """True when a column is one a scoring run produces rather than a human verifies."""
+    return any(_norm(column) == _norm(name) for name in MODEL_OUTPUT_COLUMNS)
 SUBTASK_CANDIDATES = ["SubTask", "Sub Task", "Sub-Task"]
 
 _MAX_CATEGORY_REPORT = 25
@@ -29,16 +40,16 @@ class DataReadError(ValueError):
     pass
 
 
+def _norm(name: str) -> str:
+    return "".join(ch for ch in str(name).lower() if ch.isalnum())
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
         for block in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
-
-
-def _norm(name: str) -> str:
-    return "".join(ch for ch in str(name).lower() if ch.isalnum())
 
 
 def match_column(columns, *candidates: str) -> str | None:

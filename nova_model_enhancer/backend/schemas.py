@@ -40,6 +40,7 @@ class ReadinessDecisions(BaseModel):
     subtask_mappings: list[dict[str, Any]] = []
     subtask_keywords: list[str] = []
     allow_unmapped_default: bool = False
+    acknowledge_model_output_target: bool = False
     historical_window_days: int | None = None
     approver: str
 

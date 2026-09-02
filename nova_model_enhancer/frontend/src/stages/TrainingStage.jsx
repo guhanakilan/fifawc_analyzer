@@ -2,11 +2,18 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  Action, Empty, ErrorNotice, Icon, Metrics, Notice, Panel, Pill, Progress, Table,
-} from "../components/Ui.jsx";
+  ActionRow, Badge, Btn, C, Card, CheckRow, EmptyState, ErrorNotice, Field,
+  FormGrid, MIcon, MetricGrid, Notice, Pill, ProgressBar, SectionTitle,
+  SubHeading, Table,
+} from "../nova/Components.jsx";
 import { num, when } from "../format.js";
+import { NoJob } from "./TrainingDataStage.jsx";
 
 const TERMINAL = new Set(["complete", "failed", "cancelled", "interrupted"]);
+const STATUS_TONE = {
+  complete: "ok", failed: "bad", cancelled: "warn", interrupted: "warn",
+  running: "info", queued: "muted",
+};
 
 export default function TrainingStage({ job, mark, go }) {
   const [options, setOptions] = React.useState(null);
@@ -34,7 +41,6 @@ export default function TrainingStage({ job, mark, go }) {
     }
   }, [job, mark]);
 
-  // Recover any task that was already running when this screen mounted.
   React.useEffect(() => {
     let live = true;
     if (!job) return () => {};
@@ -42,9 +48,7 @@ export default function TrainingStage({ job, mark, go }) {
       .then(([optionsBody, tasksBody]) => {
         if (!live) return;
         setOptions(optionsBody);
-        const active =
-          tasksBody.tasks.find((t) => !TERMINAL.has(t.status)) || tasksBody.tasks[0] || null;
-        setTask(active);
+        setTask(tasksBody.tasks.find((t) => !TERMINAL.has(t.status)) || tasksBody.tasks[0] || null);
       })
       .catch((err) => live && setLoadError(err));
     loadRuns();
@@ -53,13 +57,14 @@ export default function TrainingStage({ job, mark, go }) {
     };
   }, [job, loadRuns]);
 
-  // Poll while a task is live; state comes from the backend, never from memory.
   React.useEffect(() => {
     if (!task || TERMINAL.has(task.status)) return () => {};
     let live = true;
     const tick = async () => {
       try {
-        const [latest, logBody] = await Promise.all([api.task(task.task_id), api.taskLog(task.task_id)]);
+        const [latest, logBody] = await Promise.all([
+          api.task(task.task_id), api.taskLog(task.task_id),
+        ]);
         if (!live) return;
         setTask(latest);
         setLog(logBody.lines);
@@ -76,29 +81,24 @@ export default function TrainingStage({ job, mark, go }) {
     };
   }, [task, loadRuns]);
 
-  if (!job) {
-    return (
-      <Panel title="No active job" icon="info">
-        <Notice tone="warn" title="Start at Stage 01">Upload a champion package first.</Notice>
-      </Panel>
-    );
-  }
+  if (!job) return <NoJob />;
   if (loadError) {
     return (
-      <Panel title="Training unavailable" icon="report" tone="bad">
+      <Card>
+        <SectionTitle>Training unavailable</SectionTitle>
         <ErrorNotice error={loadError} title="Could not load the training options" />
-      </Panel>
+      </Card>
     );
   }
   if (!options) {
-    return <Panel title="Loading" icon="hourglass_top"><p className="muted small">Reading the champion configuration…</p></Panel>;
+    return <Card><SectionTitle sub="Reading the champion configuration…">Loading</SectionTitle></Card>;
   }
 
   const unavailable = Object.entries(options.available_model_types)
-    .filter(([, ok]) => !ok)
-    .map(([key]) => key);
+    .filter(([, ok]) => !ok).map(([key]) => key);
   const splitTotal = Number(config.train_pct) + Number(config.val_pct) + Number(config.test_pct);
   const running = task && !TERMINAL.has(task.status);
+  const set = (key, value) => setConfig((current) => ({ ...current, [key]: value }));
 
   const start = async () => {
     setBusy(true);
@@ -143,31 +143,31 @@ export default function TrainingStage({ job, mark, go }) {
     }
   };
 
-  const set = (key, value) => setConfig((current) => ({ ...current, [key]: value }));
-
   return (
     <>
-      <Panel
-        title="Candidate plan"
-        subtitle="Preprocessing is refit from scratch for every challenger. The champion's own fitted state is used only to score the champion."
-        icon="model_training"
-      >
-        <Metrics
-          cols={3}
+      <Card>
+        <SectionTitle sub="Preprocessing is refit from scratch for every challenger. The champion's own fitted state is used only to score the champion.">
+          Candidate plan
+        </SectionTitle>
+        <MetricGrid
+          compact
+          min={160}
           items={[
             { label: "Champion model", value: options.champion_model_id || "unresolved" },
             { label: "Champion family", value: (options.champion_family || "unknown").toUpperCase() },
-            { label: "Champion threshold", value: options.champion_threshold },
+            { label: "Champion threshold", value: options.champion_threshold, color: C.indigo },
           ]}
         />
-        <div className="section-title">What will be trained</div>
+        <SubHeading>What will be trained</SubHeading>
         <Table
           columns={[
             { key: "label", header: "Candidate" },
             { key: "model_type", header: "Family", render: (r) => r.model_type.toUpperCase() },
             {
               key: "mode", header: "Search",
-              render: (r) => (r.mode === "tuned" ? <Pill tone="info">Optuna</Pill> : <Pill tone="muted">fixed params</Pill>),
+              render: (r) => (r.mode === "tuned"
+                ? <Pill tone="info">Optuna</Pill>
+                : <Pill tone="muted">fixed params</Pill>),
             },
             { key: "n_trials", header: "Trials", className: "num", render: (r) => r.n_trials ?? "—" },
           ]}
@@ -180,98 +180,103 @@ export default function TrainingStage({ job, mark, go }) {
             the plan rather than silently substituted.
           </Notice>
         )}
-      </Panel>
+      </Card>
 
-      <Panel title="Run configuration" icon="tune" subtitle={options.split_note}>
-        <div className="grid-3">
-          <div className="field">
-            <label htmlFor="split-mode">Split mode</label>
-            <select id="split-mode" value={config.mode} onChange={(e) => set("mode", e.target.value)} disabled={running}>
+      <Card>
+        <SectionTitle sub={options.split_note}>Run configuration</SectionTitle>
+
+        <FormGrid min={190}>
+          <Field
+            label="Split mode" htmlFor="split-mode"
+            hint="Temporal is the honest choice for a model that scores future work."
+          >
+            <select id="split-mode" value={config.mode} disabled={running}
+              onChange={(e) => set("mode", e.target.value)}>
               <option value="temporal">Temporal — oldest train, newest test</option>
               <option value="random">Random stratified</option>
             </select>
-            <span className="hint">
-              Temporal is the honest choice for a model that scores future work.
-            </span>
-          </div>
-          <div className="field">
-            <label htmlFor="seed">Random seed</label>
-            <input id="seed" type="number" value={config.seed} onChange={(e) => set("seed", e.target.value)} disabled={running} />
-            <span className="hint">A fixed seed makes the whole run reproducible.</span>
-          </div>
-          <div className="field">
-            <label htmlFor="jobs">Parallelism (n_jobs)</label>
-            <input id="jobs" type="number" value={config.n_jobs} onChange={(e) => set("n_jobs", e.target.value)} disabled={running} />
-            <span className="hint">-1 uses every core. Lower it to keep the machine responsive.</span>
-          </div>
-        </div>
-        <div className="grid-3">
-          <div className="field">
-            <label htmlFor="train-pct">Train %</label>
-            <input id="train-pct" type="number" value={config.train_pct} onChange={(e) => set("train_pct", e.target.value)} disabled={running} />
-          </div>
-          <div className="field">
-            <label htmlFor="val-pct">Validation %</label>
-            <input id="val-pct" type="number" value={config.val_pct} onChange={(e) => set("val_pct", e.target.value)} disabled={running} />
-            <span className="hint">Used for calibration and threshold selection only.</span>
-          </div>
-          <div className="field">
-            <label htmlFor="test-pct">Test %</label>
-            <input id="test-pct" type="number" value={config.test_pct} onChange={(e) => set("test_pct", e.target.value)} disabled={running} />
-          </div>
-        </div>
+          </Field>
+          <Field label="Random seed" htmlFor="seed" hint="A fixed seed makes the whole run reproducible.">
+            <input id="seed" type="number" value={config.seed} disabled={running}
+              onChange={(e) => set("seed", e.target.value)} />
+          </Field>
+          <Field
+            label="Parallelism (n_jobs)" htmlFor="jobs"
+            hint="-1 uses every core. Lower it to keep the machine responsive."
+          >
+            <input id="jobs" type="number" value={config.n_jobs} disabled={running}
+              onChange={(e) => set("n_jobs", e.target.value)} />
+          </Field>
+        </FormGrid>
+
+        <FormGrid min={150} style={{ marginTop: 14 }}>
+          <Field label="Train %" htmlFor="train-pct">
+            <input id="train-pct" type="number" value={config.train_pct} disabled={running}
+              onChange={(e) => set("train_pct", e.target.value)} />
+          </Field>
+          <Field
+            label="Validation %" htmlFor="val-pct"
+            hint="Used for calibration and threshold selection only."
+          >
+            <input id="val-pct" type="number" value={config.val_pct} disabled={running}
+              onChange={(e) => set("val_pct", e.target.value)} />
+          </Field>
+          <Field label="Test %" htmlFor="test-pct">
+            <input id="test-pct" type="number" value={config.test_pct} disabled={running}
+              onChange={(e) => set("test_pct", e.target.value)} />
+          </Field>
+        </FormGrid>
+
         {Math.abs(splitTotal - 100) > 0.01 && (
           <Notice tone="warn" title="The split does not total 100%">
             Currently {splitTotal}%. Adjust before starting.
           </Notice>
         )}
-        <div className="grid-3">
-          <div className="field">
-            <label htmlFor="trials">Optuna trials per tuned candidate</label>
-            <input id="trials" type="number" min="1" value={config.n_trials} onChange={(e) => set("n_trials", e.target.value)} disabled={running} />
-          </div>
-          <div className="field">
-            <label htmlFor="timeout">Timeout per candidate (seconds)</label>
-            <input id="timeout" type="number" min="1" placeholder="No timeout" value={config.timeout_seconds}
-              onChange={(e) => set("timeout_seconds", e.target.value)} disabled={running} />
-          </div>
-          <div className="field">
-            <label htmlFor="criterion">Threshold criterion</label>
-            <select id="criterion" value={config.threshold_criterion} onChange={(e) => set("threshold_criterion", e.target.value)} disabled={running}>
+
+        <FormGrid min={190} style={{ marginTop: 14 }}>
+          <Field label="Optuna trials per tuned candidate" htmlFor="trials">
+            <input id="trials" type="number" min="1" value={config.n_trials} disabled={running}
+              onChange={(e) => set("n_trials", e.target.value)} />
+          </Field>
+          <Field label="Timeout per candidate (seconds)" htmlFor="timeout">
+            <input id="timeout" type="number" min="1" placeholder="No timeout"
+              value={config.timeout_seconds} disabled={running}
+              onChange={(e) => set("timeout_seconds", e.target.value)} />
+          </Field>
+          <Field
+            label="Threshold criterion" htmlFor="criterion"
+            hint="Candidates are generated on validation and reported on test."
+          >
+            <select id="criterion" value={config.threshold_criterion} disabled={running}
+              onChange={(e) => set("threshold_criterion", e.target.value)}>
               <option value="f1">F1</option>
               <option value="recall">Recall</option>
               <option value="precision">Precision</option>
               <option value="balanced_accuracy">Balanced accuracy</option>
               <option value="weighted_composite">Weighted composite</option>
             </select>
-            <span className="hint">Candidates are generated on validation and reported on test.</span>
-          </div>
-        </div>
-        <label className="checkbox">
-          <input type="checkbox" checked={config.include_baseline} disabled={running}
-            onChange={(e) => set("include_baseline", e.target.checked)} />
-          <span>Include a logistic-regression baseline, so "better than the champion" has a floor to sit above.</span>
-        </label>
-        <label className="checkbox">
-          <input type="checkbox" checked={config.run_backtest} disabled={running}
-            onChange={(e) => set("run_backtest", e.target.checked)} />
-          <span>Run a rolling-origin backtest for stability over time (diagnostic; never fails the run).</span>
-        </label>
+          </Field>
+        </FormGrid>
 
-        <div className="btn-row end">
-          <span className="btn-note">
-            Training runs in the background. You can close this tab and come back — its state lives in
-            the workspace database, not in this browser.
-          </span>
+        <div style={{ marginTop: 14 }}>
+          <CheckRow checked={config.include_baseline} disabled={running}
+            onChange={(value) => set("include_baseline", value)}>
+            Include a logistic-regression baseline, so "better than the champion" has a floor to sit above.
+          </CheckRow>
+          <CheckRow checked={config.run_backtest} disabled={running}
+            onChange={(value) => set("run_backtest", value)}>
+            Run a rolling-origin backtest for stability over time (diagnostic; never fails the run).
+          </CheckRow>
+        </div>
+
+        <ActionRow note="Training runs in the background. You can close this tab and come back — its state lives in the workspace database, not in this browser.">
           {running ? (
-            <button type="button" className="btn danger" onClick={cancel}>
-              <Icon name="stop_circle" size={15} /> Cancel run
-            </button>
+            <Btn variant="danger" onClick={cancel}>
+              <MIcon name="stop_circle" size={15} /> Cancel run
+            </Btn>
           ) : (
-            <Action
-              onClick={start}
-              busy={busy}
-              busyLabel="Queuing…"
+            <Btn
+              onClick={start} busy={busy} busyLabel="Queuing…"
               disabledReason={
                 !options.snapshot_ready ? "Build a dataset snapshot in Stage 03 first."
                   : !options.weight_strategy_approved ? "Approve a weight strategy in Stage 04 first."
@@ -279,19 +284,25 @@ export default function TrainingStage({ job, mark, go }) {
                   : undefined
               }
             >
-              <Icon name="play_arrow" size={15} /> Start retraining
-            </Action>
+              <MIcon name="play_arrow" size={15} /> Start retraining
+            </Btn>
           )}
-        </div>
+        </ActionRow>
         <ErrorNotice error={error} title="The run could not start" />
-      </Panel>
+      </Card>
 
-      {task && <TaskPanel task={task} log={log} />}
+      {task && <TaskCard task={task} log={log} />}
 
-      <Panel title="Completed runs" icon="history"
-        actions={<button type="button" className="btn ghost" onClick={loadRuns}><Icon name="refresh" size={15} /> Refresh</button>}>
+      <Card>
+        <SectionTitle
+          right={<Btn variant="ghost" small onClick={loadRuns}>
+            <MIcon name="refresh" size={14} /> Refresh
+          </Btn>}
+        >
+          Completed runs
+        </SectionTitle>
         {runs.length === 0 ? (
-          <Empty icon="science">No run has completed for this job yet.</Empty>
+          <EmptyState icon="science">No run has completed for this job yet.</EmptyState>
         ) : (
           <>
             <Table
@@ -300,36 +311,47 @@ export default function TrainingStage({ job, mark, go }) {
                 { key: "created_at", header: "Completed", render: (r) => when(r.created_at) },
                 { key: "split_mode", header: "Split" },
                 { key: "feature_count", header: "Features", className: "num" },
-                { key: "candidates_trained", header: "Candidates", render: (r) => r.candidates_trained.join(", ") },
+                {
+                  key: "candidates_trained", header: "Candidates",
+                  render: (r) => r.candidates_trained.join(", "),
+                },
               ]}
               rows={runs}
               rowKey={(row) => row.run_id}
             />
-            <div className="btn-row end">
-              <Action onClick={() => go("comparison")}>
-                Compare against the champion <Icon name="arrow_forward" size={15} />
-              </Action>
-            </div>
+            <ActionRow>
+              <Btn onClick={() => go("comparison")}>
+                Compare against the champion <MIcon name="arrow_forward" size={15} />
+              </Btn>
+            </ActionRow>
           </>
         )}
-      </Panel>
+      </Card>
     </>
   );
 }
 
-function TaskPanel({ task, log }) {
-  const tone = {
-    complete: "ok", failed: "bad", cancelled: "warn", interrupted: "warn",
-  }[task.status] || "";
+function TaskCard({ task, log }) {
+  const tone = STATUS_TONE[task.status] || "muted";
   return (
-    <Panel
-      title={`Task ${task.task_id}`}
-      subtitle={`${task.kind} · started ${when(task.created_at)}`}
-      icon="terminal"
-      tone={tone}
-      actions={<Pill tone={tone || "info"}>{task.status}</Pill>}
-    >
-      <Progress value={task.progress} label={task.message || task.status} />
+    <Card borderSize={task.status === "complete" ? 2 : 1}>
+      <SectionTitle
+        sub={`${task.kind} · started ${when(task.created_at)}`}
+        right={<Pill tone={tone}>{task.status}</Pill>}
+      >
+        Task {task.task_id}
+      </SectionTitle>
+
+      <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 6 }}>
+        <span style={{ fontSize: 12, color: "var(--nova-grey-dim)" }}>
+          {task.message || task.status}
+        </span>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 12, fontFamily: "'DM Mono',monospace" }}>
+          {Math.round((task.progress || 0) * 100)}%
+        </span>
+      </div>
+      <ProgressBar value={task.progress || 0} max={1} />
 
       {task.status === "interrupted" && (
         <Notice tone="warn" title="This task did not survive a backend restart">
@@ -348,17 +370,16 @@ function TaskPanel({ task, log }) {
         <Notice tone="ok" title={`Run ${task.result.run_id} complete`}>
           Trained: {task.result.candidates_trained?.join(", ") || "—"}
           {task.result.candidates_skipped?.length
-            ? ` · skipped: ${task.result.candidates_skipped.join(", ")}`
-            : ""}
+            ? ` · skipped: ${task.result.candidates_skipped.join(", ")}` : ""}
         </Notice>
       )}
 
       {log.length > 0 && (
         <>
-          <div className="section-title">Run log</div>
-          <pre className="log">{log.join("\n")}</pre>
+          <SubHeading>Run log</SubHeading>
+          <pre className="nova-log">{log.join("\n")}</pre>
         </>
       )}
-    </Panel>
+    </Card>
   );
 }

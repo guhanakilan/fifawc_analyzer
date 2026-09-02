@@ -207,3 +207,85 @@ def test_run_id_path_traversal_is_refused(client, champion_export):
     response = client.get(f"/api/training/{job_id}/runs/..%2F..%2Fetc")
     assert response.status_code in (400, 404, 422, 500)
     assert "etc" not in str(response.content).lower() or response.status_code != 200
+
+
+# ── Model output must never become ground truth ──────────────────────────────
+
+def _job_with_data(client, champion_export):
+    import io
+
+    with champion_export["zip_path"].open("rb") as handle:
+        job_id = client.post(
+            "/api/packages/upload",
+            files={"file": ("plc984.zip", handle, "application/zip")},
+        ).json()["job_id"]
+    frame = champion_export["raw"].copy()
+    frame["ml_tag"] = 1
+    buffer = io.BytesIO()
+    frame.to_parquet(buffer, index=False)
+    buffer.seek(0)
+    client.post(
+        f"/api/training-data/{job_id}/upload",
+        files={"file": ("d.parquet", buffer, "application/octet-stream")},
+        data={"role": "combined"},
+    )
+    return job_id
+
+
+def test_model_output_column_is_not_offered_as_the_default_label(client, champion_export):
+    job_id = _job_with_data(client, champion_export)
+    review = client.get(f"/api/readiness/{job_id}/review").json()
+    assert "ml_tag" in review["model_output_columns_present"]
+    assert review["detected_target_column"] != "ml_tag", (
+        "a column the scoring run writes must never be the pre-selected label"
+    )
+
+
+def test_training_on_a_model_output_column_is_blocked(client, champion_export):
+    job_id = _job_with_data(client, champion_export)
+    payload = {
+        "date_column": "UpdatedDateTimeGMT",
+        "target_mode": "existing",
+        "target_column": "ml_tag",
+        "target_encoding": {"voice_values": ["0"], "non_voice_values": ["1"]},
+        "dedup_mode": "full_row",
+        "approver": "tester",
+    }
+    blocked = client.post(f"/api/readiness/{job_id}/decisions", json=payload)
+    assert blocked.status_code == 409
+    assert "own predictions as ground truth" in blocked.json()["detail"]
+
+    acknowledged = client.post(
+        f"/api/readiness/{job_id}/decisions",
+        json={**payload, "acknowledge_model_output_target": True},
+    )
+    assert acknowledged.status_code == 200, "an explicit acknowledgement must still be possible"
+
+
+# ── Errors must not leak the workspace layout ────────────────────────────────
+
+def test_unreadable_upload_does_not_leak_a_filesystem_path(client, champion_export):
+    import io
+
+    with champion_export["zip_path"].open("rb") as handle:
+        job_id = client.post(
+            "/api/packages/upload",
+            files={"file": ("plc984.zip", handle, "application/zip")},
+        ).json()["job_id"]
+    response = client.post(
+        f"/api/training-data/{job_id}/upload",
+        files={"file": ("broken.parquet", io.BytesIO(b"not a parquet file"), "application/octet-stream")},
+        data={"role": "combined"},
+    )
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert "/" not in detail.replace("<path>", ""), f"path leaked in: {detail}"
+    assert "workspace" not in detail.lower()
+
+
+def test_scrub_removes_paths_but_keeps_the_reason():
+    from nova_model_enhancer.backend.services.safety import scrub
+
+    scrubbed = scrub("Parquet magic bytes not found in /home/u/workspace/jobs/X/datasets/D.parquet")
+    assert "workspace" not in scrubbed
+    assert "Parquet magic bytes not found" in scrubbed

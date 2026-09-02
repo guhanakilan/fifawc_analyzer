@@ -2,9 +2,11 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  Action, CheckList, DropZone, Empty, ErrorNotice, Icon, Metrics, Notice, Panel, Pill, Table,
-} from "../components/Ui.jsx";
+  ActionRow, Badge, Btn, C, Card, CheckList, DropZone, EmptyState, ErrorNotice,
+  Field, FormGrid, MIcon, MetricGrid, Notice, SectionTitle, SubHeading, Table,
+} from "../nova/Components.jsx";
 import { bytes, num, shortHash, when } from "../format.js";
+import { NoJob } from "./TrainingDataStage.jsx";
 
 export default function ExportStage({ job }) {
   const [mlTag, setMlTag] = React.useState(null);
@@ -32,8 +34,7 @@ export default function ExportStage({ job }) {
       setRuns(runsBody.runs);
       setExports(exportsBody.exports);
       if (tagBody.approved_config) setForm((c) => ({ ...c, ...tagBody.approved_config }));
-      const first = runsBody.runs[0]?.run_id || null;
-      setRunId((current) => current || first);
+      setRunId((current) => current || runsBody.runs[0]?.run_id || null);
     } catch (err) {
       setLoadError(err);
     }
@@ -46,8 +47,7 @@ export default function ExportStage({ job }) {
   React.useEffect(() => {
     let live = true;
     if (!job || !runId) return () => {};
-    api
-      .comparison(job.job_id, runId)
+    api.comparison(job.job_id, runId)
       .then((body) => live && setComparison(body))
       .catch(() => live && setComparison(null));
     return () => {
@@ -55,23 +55,19 @@ export default function ExportStage({ job }) {
     };
   }, [job, runId]);
 
-  if (!job) {
-    return (
-      <Panel title="No active job" icon="info">
-        <Notice tone="warn" title="Start at Stage 01">Upload a champion package first.</Notice>
-      </Panel>
-    );
-  }
+  if (!job) return <NoJob />;
   if (loadError) {
     return (
-      <Panel title="Export unavailable" icon="report" tone="bad">
+      <Card>
+        <SectionTitle>Export unavailable</SectionTitle>
         <ErrorNotice error={loadError} />
-      </Panel>
+      </Card>
     );
   }
 
   const approval = comparison?.approval;
   const approvedCandidate = approval?.decision === "APPROVED" ? approval.selected_candidate_id : null;
+  const tagApproved = Boolean(mlTag?.approved_config);
 
   const approveTag = async () => {
     setBusy(true);
@@ -124,92 +120,87 @@ export default function ExportStage({ job }) {
 
   const buildBlocker =
     !approvedCandidate ? "Approve a model for promotion in Stage 06 first."
-      : !mlTag?.approved_config ? "Confirm the ml_tag encoding below first."
+      : !tagApproved ? "Confirm the ml_tag encoding above first."
       : undefined;
 
   return (
     <>
-      <Panel
-        title="The ml_tag encoding"
-        subtitle="A business decision this application will not make on your behalf."
-        icon="label"
-        tone={mlTag?.approved_config ? "ok" : "warn"}
-        actions={<Pill tone={mlTag?.approved_config ? "ok" : "warn"}>{mlTag?.approved_config ? "Approved" : "Blocked"}</Pill>}
-      >
-        {mlTag?.approved_config ? (
-          <Notice tone="ok" title="This decision has been recorded">
-            The encoding below is what the built package will emit, and it is written into
-            <code> scoring/ml_tag_config.json</code> so the runtime can refuse any other convention.
-          </Notice>
-        ) : (
-          <Notice tone="warn" title="Why this is blocked by default">
-            {mlTag?.decision_required}
-          </Notice>
-        )}
+      <Card borderSize={tagApproved ? 2 : 1}>
+        <SectionTitle
+          sub="A business decision this application will not make on your behalf."
+          right={<Badge color={tagApproved ? C.green : "#F59E0B"}
+            bg={tagApproved ? "#E3F5EC" : "#FDF2DD"}>
+            {tagApproved ? "APPROVED" : "BLOCKED"}
+          </Badge>}
+        >
+          The ml_tag encoding
+        </SectionTitle>
 
-        {mlTag?.candidate_conventions?.map((convention) => (
-          <label className="checkbox" key={convention.label}>
-            <input
-              type="radio"
-              name="convention"
-              checked={
-                Number(form.voice_value) === convention.voice_value &&
-                Number(form.non_voice_value) === convention.non_voice_value
-              }
-              disabled={Boolean(mlTag?.approved_config)}
-              onChange={() => setForm((c) => ({
-                ...c, voice_value: convention.voice_value, non_voice_value: convention.non_voice_value,
-              }))}
-            />
-            <span>
-              <strong>{convention.label}</strong>
-              <div className="muted small">
-                {convention.voice_value} = Voice, {convention.non_voice_value} = Non-Voice · {convention.note}
-              </div>
-            </span>
-          </label>
-        ))}
-
-        <div className="grid-3">
-          <div className="field">
-            <label htmlFor="tag-column">Appended column name</label>
-            <input id="tag-column" type="text" value={form.column_name} disabled={Boolean(mlTag?.approved_config)}
-              onChange={(e) => setForm((c) => ({ ...c, column_name: e.target.value }))} />
-          </div>
-          <div className="field">
-            <label htmlFor="tag-approver">Approved by</label>
-            <input id="tag-approver" type="text" placeholder="Your name" value={form.approver}
-              disabled={Boolean(mlTag?.approved_config)}
-              onChange={(e) => setForm((c) => ({ ...c, approver: e.target.value }))} />
-          </div>
-          <div className="field">
-            <label htmlFor="tag-notes">Notes</label>
-            <input id="tag-notes" type="text" value={form.notes} disabled={Boolean(mlTag?.approved_config)}
-              onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} />
-          </div>
-        </div>
-
-        {mlTag?.approved_config ? (
+        {tagApproved ? (
           <Notice tone="ok" title={`Approved by ${mlTag.approved_by}`}>
-            <code>{mlTag.approved_config.column_name}</code>: {mlTag.approved_config.voice_value} = Voice,{" "}
-            {mlTag.approved_config.non_voice_value} = Non-Voice. The package refuses to emit this column
-            under any other convention.
+            <code>{mlTag.approved_config.column_name}</code>: {mlTag.approved_config.voice_value} =
+            Voice, {mlTag.approved_config.non_voice_value} = Non-Voice. This is written into{" "}
+            <code>scoring/ml_tag_config.json</code>, and the packaged runtime refuses to emit the
+            column under any other convention.
           </Notice>
         ) : (
-          <div className="btn-row end">
-            <Action onClick={approveTag} busy={busy} busyLabel="Saving…"
-              disabledReason={!form.approver.trim() ? "Enter an approver name." : undefined}>
-              <Icon name="how_to_reg" size={15} /> Confirm this encoding
-            </Action>
-          </div>
-        )}
-      </Panel>
+          <>
+            <Notice tone="warn" title="Why this is blocked by default">
+              {mlTag?.decision_required}
+            </Notice>
+            {mlTag?.candidate_conventions?.map((convention) => (
+              <label key={convention.label} style={{
+                display: "flex", gap: 9, alignItems: "flex-start", fontSize: 12.5,
+                marginBottom: 10, cursor: "pointer",
+              }}>
+                <input
+                  type="radio" name="convention"
+                  checked={Number(form.voice_value) === convention.voice_value
+                    && Number(form.non_voice_value) === convention.non_voice_value}
+                  onChange={() => setForm((c) => ({
+                    ...c, voice_value: convention.voice_value, non_voice_value: convention.non_voice_value,
+                  }))}
+                  style={{ marginTop: 2, accentColor: C.green, width: "auto" }}
+                />
+                <span>
+                  <strong style={{ color: "var(--nova-header-text)" }}>{convention.label}</strong>
+                  <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 2 }}>
+                    {convention.voice_value} = Voice, {convention.non_voice_value} = Non-Voice ·{" "}
+                    {convention.note}
+                  </div>
+                </span>
+              </label>
+            ))}
 
-      <Panel
-        title="Scoring compatibility sample"
-        subtitle="A de-identified inventory extract, used to prove the built package scores correctly."
-        icon="science"
-      >
+            <FormGrid min={190}>
+              <Field label="Appended column name" htmlFor="tag-column">
+                <input id="tag-column" type="text" value={form.column_name}
+                  onChange={(e) => setForm((c) => ({ ...c, column_name: e.target.value }))} />
+              </Field>
+              <Field label="Approved by" htmlFor="tag-approver">
+                <input id="tag-approver" type="text" placeholder="Your name" value={form.approver}
+                  onChange={(e) => setForm((c) => ({ ...c, approver: e.target.value }))} />
+              </Field>
+              <Field label="Notes" htmlFor="tag-notes">
+                <input id="tag-notes" type="text" value={form.notes}
+                  onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} />
+              </Field>
+            </FormGrid>
+
+            <ActionRow>
+              <Btn onClick={approveTag} busy={busy} busyLabel="Saving…"
+                disabledReason={!form.approver.trim() ? "Enter an approver name." : undefined}>
+                <MIcon name="how_to_reg" size={15} /> Confirm this encoding
+              </Btn>
+            </ActionRow>
+          </>
+        )}
+      </Card>
+
+      <Card>
+        <SectionTitle sub="A de-identified inventory extract, used to prove the built package scores correctly.">
+          Scoring compatibility sample
+        </SectionTitle>
         <DropZone
           accept=".parquet,.csv,.xlsx,.xls"
           label="Choose a de-identified inventory sample"
@@ -218,46 +209,42 @@ export default function ExportStage({ job }) {
           onFile={setInventoryFile}
           disabled={busy}
         />
-        <div className="btn-row end">
-          <span className="btn-note">
-            Without a sample, the check falls back to rows taken from the snapshot. The validation
-            report always records which was used.
-          </span>
-          <Action className="btn ghost" onClick={uploadInventory} busy={busy} busyLabel="Reading…"
+        <ActionRow note="Without a sample, the check falls back to rows taken from the snapshot. The validation report always records which was used.">
+          <Btn variant="secondary" onClick={uploadInventory} busy={busy} busyLabel="Reading…"
             disabledReason={!inventoryFile ? "Choose a file first." : undefined}>
-            <Icon name="upload" size={15} /> Upload sample
-          </Action>
-        </div>
+            <MIcon name="upload" size={15} /> Upload sample
+          </Btn>
+        </ActionRow>
         {inventory && (
           <Notice tone="ok" title={`${num(inventory.rows)} rows, ${inventory.columns} columns`}>
             The package must return exactly these rows and columns plus one appended{" "}
             <code>{form.column_name}</code>.
           </Notice>
         )}
-        <ErrorNotice error={error} />
-      </Panel>
+        <ErrorNotice error={error && !error.body?.detail?.validation ? error : null} />
+      </Card>
 
-      <Panel
-        title="Build the package"
-        subtitle="The ZIP is assembled, then unzipped and scored exactly as the deployment does. It is only published if that passes."
-        icon="deployed_code"
-        actions={
-          runs.length > 1 && (
-            <select value={runId || ""} onChange={(e) => setRunId(e.target.value)} aria-label="Run to export">
-              {runs.map((run) => (
-                <option key={run.run_id} value={run.run_id}>{run.run_id}</option>
-              ))}
+      <Card>
+        <SectionTitle
+          sub="The ZIP is assembled, then unzipped and scored exactly as the deployment does. It is only published if that passes."
+          right={runs.length > 1 ? (
+            <select value={runId || ""} onChange={(e) => setRunId(e.target.value)}
+              aria-label="Run to export" style={{ width: "auto", minWidth: 200 }}>
+              {runs.map((run) => <option key={run.run_id} value={run.run_id}>{run.run_id}</option>)}
             </select>
-          )
-        }
-      >
+          ) : null}
+        >
+          Build the package
+        </SectionTitle>
+
         {approvedCandidate ? (
-          <Metrics
-            cols={3}
+          <MetricGrid
+            compact
+            min={170}
             items={[
-              { label: "Approved candidate", value: approvedCandidate },
+              { label: "Approved candidate", value: approvedCandidate, color: C.green },
               { label: "Approved by", value: approval.approver, sub: when(approval.approved_at) },
-              { label: "Threshold", value: approval.selected_threshold },
+              { label: "Threshold", value: approval.selected_threshold, color: C.indigo },
             ]}
           />
         ) : (
@@ -266,11 +253,12 @@ export default function ExportStage({ job }) {
           </Notice>
         )}
 
-        <div className="btn-row end">
-          <Action onClick={build} busy={busy} busyLabel="Building and validating…" disabledReason={buildBlocker}>
-            <Icon name="build" size={15} /> Build &amp; validate package
-          </Action>
-        </div>
+        <ActionRow>
+          <Btn onClick={build} busy={busy} busyLabel="Building and validating…" disabledReason={buildBlocker}>
+            <MIcon name="build" size={15} /> Build &amp; validate package
+          </Btn>
+        </ActionRow>
+
         {error?.body?.detail?.validation && (
           <>
             <Notice tone="bad" title="Validation failed — the ZIP was discarded, not published">
@@ -279,37 +267,47 @@ export default function ExportStage({ job }) {
             <CheckList checks={error.body.detail.validation.checks} />
           </>
         )}
-        {error && !error.body?.detail?.validation && <ErrorNotice error={error} />}
 
         {built && (
           <>
             <Notice tone="ok" title={`${built.zip_name} built and validated`}>
-              Version {built.version} · {bytes(built.size_bytes)} · sha256 {shortHash(built.zip_sha256, 24)}
+              Version {built.version} · {bytes(built.size_bytes)} · sha256{" "}
+              {shortHash(built.zip_sha256, 24)}
             </Notice>
-            <div className="section-title">Package validation record</div>
+            <SubHeading>Package validation record</SubHeading>
             <CheckList checks={built.validation.checks} />
             {built.validation.prediction_agreement?.rows > 0 && (
-              <Metrics
-                cols={3}
+              <MetricGrid
+                compact
+                min={160}
                 items={[
                   { label: "Rows scored", value: num(built.validation.prediction_agreement.rows) },
-                  { label: "Identical to 4dp", value: `${built.validation.prediction_agreement.agreement_pct}%` },
-                  { label: "Max difference", value: built.validation.prediction_agreement.max_absolute_difference },
+                  {
+                    label: "Identical to 4dp",
+                    value: `${built.validation.prediction_agreement.agreement_pct}%`,
+                    color: C.green,
+                  },
+                  {
+                    label: "Max difference",
+                    value: built.validation.prediction_agreement.max_absolute_difference,
+                  },
                 ]}
               />
             )}
-            <p className="muted small">
+            <p style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 10 }}>
               Inventory used: {built.validation.inventory_source}. Reference predictions:{" "}
               {built.validation.expected_prediction_source}.
             </p>
           </>
         )}
-      </Panel>
+      </Card>
 
-      <Panel title="Versions and rollback" icon="inventory"
-        subtitle="Every version is retained. This application never deploys anything by itself.">
+      <Card>
+        <SectionTitle sub="Every version is retained. This application never deploys anything by itself.">
+          Versions and rollback
+        </SectionTitle>
         {exports.length === 0 ? (
-          <Empty icon="archive">No package has been published for this job yet.</Empty>
+          <EmptyState icon="archive">No package has been published for this job yet.</EmptyState>
         ) : (
           <Table
             columns={[
@@ -321,21 +319,23 @@ export default function ExportStage({ job }) {
               { key: "zip_sha256", header: "SHA-256", render: (r) => shortHash(r.zip_sha256) },
               {
                 key: "download", header: "",
-                render: (row) =>
-                  row.exists ? (
-                    <a className="btn ghost" href={api.downloadUrl(row.export_id)}>
-                      <Icon name="download" size={14} /> Download
-                    </a>
-                  ) : (
-                    <span className="muted small">file missing</span>
-                  ),
+                render: (row) => (row.exists ? (
+                  <a href={api.downloadUrl(row.export_id)} style={{
+                    display: "inline-flex", alignItems: "center", gap: 5, color: C.indigo,
+                    fontWeight: 700, textDecoration: "none", fontSize: 12,
+                  }}>
+                    <MIcon name="download" size={14} /> Download
+                  </a>
+                ) : (
+                  <span style={{ color: "var(--nova-grey-dim)" }}>file missing</span>
+                )),
               },
             ]}
             rows={exports}
             rowKey={(row) => row.export_id}
           />
         )}
-      </Panel>
+      </Card>
     </>
   );
 }

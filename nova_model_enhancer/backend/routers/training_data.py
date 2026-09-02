@@ -24,7 +24,7 @@ from ..services.data_profiler import (
     profile_dataset,
     sha256_file,
 )
-from ..services.safety import safe_filename
+from ..services.safety import safe_filename, scrub
 from .packages import require_job
 
 router = APIRouter(prefix="/api/training-data", tags=["2 · Training data"])
@@ -102,10 +102,12 @@ def upload_training_data(
         return {**record, "uploaded_bytes": size}
     except DataReadError as exc:
         stored_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=scrub(exc)) from exc
     except Exception as exc:
         stored_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=f"Could not read the training data: {exc}") from exc
+        raise HTTPException(
+            status_code=422, detail=f"Could not read the training data: {scrub(exc)}",
+        ) from exc
     finally:
         file.file.close()
 

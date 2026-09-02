@@ -16,6 +16,7 @@ from typing import Callable
 
 from .. import database
 from ..config import job_dir
+from .safety import scrub
 
 _THREADS: dict[str, threading.Thread] = {}
 
@@ -84,7 +85,7 @@ def start_task(job_id: str, kind: str, request: dict, worker: Callable[[TaskCont
             context.log(f"Task failed: {exc}\n{detail}")
             database.update_background_job(
                 task_id, status="failed", progress=1.0,
-                message=str(exc)[:400], error=str(exc)[:2000],
+                message=scrub(exc), error=scrub(exc, limit=2000),
             )
 
     thread = threading.Thread(target=_run, name=f"task-{task_id}", daemon=True)

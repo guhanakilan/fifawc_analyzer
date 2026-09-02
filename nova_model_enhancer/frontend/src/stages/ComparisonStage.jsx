@@ -2,9 +2,12 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  Action, Empty, ErrorNotice, Icon, Metrics, Notice, Panel, Pill, Table,
-} from "../components/Ui.jsx";
+  ActionRow, Badge, Btn, C, Card, CheckRow, EmptyState, ErrorNotice, Field,
+  FormGrid, MIcon, MetricGrid, Notice, Pill, SectionTitle, SubHeading, Table,
+} from "../nova/Components.jsx";
+import { useTheme } from "../nova/theme.jsx";
 import { delta, metric, num, when } from "../format.js";
+import { NoJob } from "./TrainingDataStage.jsx";
 
 const METRIC_KEYS = [
   ["f1", "F1"], ["precision", "Precision"], ["recall", "Recall"],
@@ -16,7 +19,7 @@ const GATE_TONE = {
   RECOMMENDED: "ok", NOT_RECOMMENDED: "warn", BLOCKED: "bad", APPROVED: "ok",
 };
 
-export default function ComparisonStage({ job, progress, mark, go }) {
+export default function ComparisonStage({ job, mark, go }) {
   const [runs, setRuns] = React.useState([]);
   const [runId, setRunId] = React.useState(null);
   const [gate, setGate] = React.useState(null);
@@ -55,7 +58,7 @@ export default function ComparisonStage({ job, progress, mark, go }) {
     try {
       const body = await api.comparison(job.job_id, runId);
       setComparison(body);
-      setSelected(body.leading_candidate);
+      setSelected((current) => current || body.leading_candidate);
       if (body.approval?.decision === "APPROVED") mark("approvedRunId", runId);
     } catch (comparisonError) {
       setError(comparisonError);
@@ -66,25 +69,21 @@ export default function ComparisonStage({ job, progress, mark, go }) {
     loadComparison();
   }, [loadComparison]);
 
-  if (!job) {
-    return (
-      <Panel title="No active job" icon="info">
-        <Notice tone="warn" title="Start at Stage 01">Upload a champion package first.</Notice>
-      </Panel>
-    );
-  }
+  if (!job) return <NoJob />;
   if (loadError) {
     return (
-      <Panel title="Comparison unavailable" icon="report" tone="bad">
+      <Card>
+        <SectionTitle>Comparison unavailable</SectionTitle>
         <ErrorNotice error={loadError} />
-      </Panel>
+      </Card>
     );
   }
   if (!runs.length) {
     return (
-      <Panel title="Nothing to compare yet" icon="compare_arrows">
-        <Empty icon="science">Complete a retraining run in Stage 05 first.</Empty>
-      </Panel>
+      <Card>
+        <SectionTitle>Nothing to compare yet</SectionTitle>
+        <EmptyState icon="science">Complete a retraining run in Stage 05 first.</EmptyState>
+      </Card>
     );
   }
 
@@ -92,7 +91,8 @@ export default function ComparisonStage({ job, progress, mark, go }) {
     setBusy(true);
     setError(null);
     try {
-      await api.saveGate(job.job_id, { gate: stripGate(gateForm), approver: gateApprover.trim() });
+      const { approved, approver: _ignored, ...payload } = gateForm;
+      await api.saveGate(job.job_id, { gate: payload, approver: gateApprover.trim() });
       const refreshed = await api.gate(job.job_id);
       setGate(refreshed);
       setGateForm({ ...refreshed.gate });
@@ -122,162 +122,171 @@ export default function ComparisonStage({ job, progress, mark, go }) {
   };
 
   const candidates = comparison
-    ? Object.entries(comparison.candidates).filter(([, value]) => !value.skipped)
-    : [];
+    ? Object.entries(comparison.candidates).filter(([, value]) => !value.skipped) : [];
   const championMetrics = comparison?.champion?.test_metrics || {};
   const gateResult = comparison?.gate_results?.[selected];
   const approval = comparison?.approval;
 
   return (
     <>
-      <Panel
-        title="Promotion gate"
-        subtitle="What counts as better must be decided before looking at the numbers, not after."
-        icon="gavel"
-        tone={gate?.gate?.approved ? "ok" : "warn"}
-        actions={<Pill tone={gate?.gate?.approved ? "ok" : "warn"}>{gate?.gate?.approved ? "Approved" : "Not approved"}</Pill>}
-      >
+      <Card borderSize={gate?.gate?.approved ? 2 : 1}>
+        <SectionTitle
+          sub="What counts as better must be decided before looking at the numbers, not after."
+          right={<Badge color={gate?.gate?.approved ? C.green : "#F59E0B"}
+            bg={gate?.gate?.approved ? "#E3F5EC" : "#FDF2DD"}>
+            {gate?.gate?.approved ? "APPROVED" : "NOT APPROVED"}
+          </Badge>}
+        >
+          Promotion gate
+        </SectionTitle>
+
         {!gate?.gate?.approved && (
           <Notice tone="warn" title="Every comparison is BLOCKED until this gate is approved">
             {gate?.proposed_note}
           </Notice>
         )}
+
         {gateForm && (
           <>
-            <div className="grid-3">
-              <div className="field">
-                <label htmlFor="primary-metric">Primary metric</label>
+            <FormGrid min={190}>
+              <Field label="Primary metric" htmlFor="primary-metric">
                 <select id="primary-metric" value={gateForm.primary_metric}
                   onChange={(e) => setGateForm((c) => ({ ...c, primary_metric: e.target.value }))}>
                   {gate.primary_metric_choices.map((choice) => (
                     <option key={choice} value={choice}>{choice}</option>
                   ))}
                 </select>
-              </div>
-              <div className="field">
-                <label htmlFor="min-improve">Minimum improvement (%)</label>
+              </Field>
+              <Field label="Minimum improvement (%)" htmlFor="min-improve">
                 <input id="min-improve" type="number" step="0.1" value={gateForm.min_primary_improvement_pct}
-                  onChange={(e) => setGateForm((c) => ({ ...c, min_primary_improvement_pct: Number(e.target.value) }))} />
-              </div>
-              <div className="field">
-                <label htmlFor="hist-regress">Max historical regression (%)</label>
-                <input id="hist-regress" type="number" step="0.1" value={gateForm.max_historical_primary_regression_pct ?? ""}
+                  onChange={(e) => setGateForm((c) => ({
+                    ...c, min_primary_improvement_pct: Number(e.target.value),
+                  }))} />
+              </Field>
+              <Field label="Max historical regression (%)" htmlFor="hist-regress">
+                <input id="hist-regress" type="number" step="0.1"
+                  value={gateForm.max_historical_primary_regression_pct ?? ""}
                   onChange={(e) => setGateForm((c) => ({
                     ...c,
-                    max_historical_primary_regression_pct: e.target.value === "" ? null : Number(e.target.value),
+                    max_historical_primary_regression_pct:
+                      e.target.value === "" ? null : Number(e.target.value),
                   }))} />
-              </div>
-            </div>
-            <div className="section-title">Protected metrics</div>
+              </Field>
+            </FormGrid>
+
+            <SubHeading>Protected metrics</SubHeading>
             {(gateForm.protected_metrics || []).map((protectedMetric, index) => (
-              <div className="grid-3" key={index}>
-                <div className="field">
-                  <label htmlFor={`protected-${index}`}>Metric</label>
+              <FormGrid min={180} key={index} style={{ marginBottom: 10, alignItems: "end" }}>
+                <Field label="Metric" htmlFor={`protected-${index}`}>
                   <select id={`protected-${index}`} value={protectedMetric.metric}
                     onChange={(e) => {
                       const next = [...gateForm.protected_metrics];
                       next[index] = { ...next[index], metric: e.target.value };
                       setGateForm((c) => ({ ...c, protected_metrics: next }));
                     }}>
-                    {METRIC_KEYS.map(([key, label]) => (
-                      <option key={key} value={key}>{label}</option>
-                    ))}
+                    {METRIC_KEYS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                   </select>
-                </div>
-                <div className="field">
-                  <label htmlFor={`tolerance-${index}`}>Max regression (%)</label>
-                  <input id={`tolerance-${index}`} type="number" step="0.1" value={protectedMetric.max_regression_pct}
+                </Field>
+                <Field label="Max regression (%)" htmlFor={`tolerance-${index}`}>
+                  <input id={`tolerance-${index}`} type="number" step="0.1"
+                    value={protectedMetric.max_regression_pct}
                     onChange={(e) => {
                       const next = [...gateForm.protected_metrics];
                       next[index] = { ...next[index], max_regression_pct: Number(e.target.value) };
                       setGateForm((c) => ({ ...c, protected_metrics: next }));
                     }} />
+                </Field>
+                <div>
+                  <Btn variant="ghost" small onClick={() => setGateForm((c) => ({
+                    ...c, protected_metrics: c.protected_metrics.filter((_, i) => i !== index),
+                  }))}>
+                    <MIcon name="delete" size={14} /> Remove
+                  </Btn>
                 </div>
-                <div className="field" style={{ justifyContent: "flex-end" }}>
-                  <button type="button" className="btn ghost"
-                    onClick={() => setGateForm((c) => ({
-                      ...c, protected_metrics: c.protected_metrics.filter((_, i) => i !== index),
-                    }))}>
-                    <Icon name="delete" size={14} /> Remove
-                  </button>
-                </div>
-              </div>
+              </FormGrid>
             ))}
-            <button type="button" className="btn ghost"
-              onClick={() => setGateForm((c) => ({
-                ...c, protected_metrics: [...(c.protected_metrics || []), { metric: "precision", max_regression_pct: 1.0 }],
-              }))}>
-              <Icon name="add" size={14} /> Add a protected metric
-            </button>
+            <Btn variant="ghost" small onClick={() => setGateForm((c) => ({
+              ...c,
+              protected_metrics: [...(c.protected_metrics || []), { metric: "precision", max_regression_pct: 1.0 }],
+            }))}>
+              <MIcon name="add" size={14} /> Add a protected metric
+            </Btn>
 
-            <div className="grid-3" style={{ marginTop: 12 }}>
-              <div className="field">
-                <label htmlFor="segment-col">Segment column for breakdowns</label>
+            <FormGrid min={190} style={{ marginTop: 16 }}>
+              <Field label="Segment column for breakdowns" htmlFor="segment-col">
                 <input id="segment-col" type="text" value={gateForm.segment_column || ""}
                   onChange={(e) => setGateForm((c) => ({ ...c, segment_column: e.target.value || null }))} />
-              </div>
-              <div className="field">
-                <label htmlFor="min-segment">Minimum rows per segment</label>
+              </Field>
+              <Field
+                label="Minimum rows per segment" htmlFor="min-segment"
+                hint="Smaller segments are listed as skipped rather than reported noisily."
+              >
                 <input id="min-segment" type="number" min="10" value={gateForm.min_segment_rows}
                   onChange={(e) => setGateForm((c) => ({ ...c, min_segment_rows: Number(e.target.value) }))} />
-                <span className="hint">Smaller segments are listed as skipped rather than reported noisily.</span>
-              </div>
-              <div className="field">
-                <label htmlFor="gate-approver">Approved by</label>
+              </Field>
+              <Field label="Approved by" htmlFor="gate-approver">
                 <input id="gate-approver" type="text" placeholder="Your name" value={gateApprover}
                   onChange={(e) => setGateApprover(e.target.value)} />
-              </div>
-            </div>
-            <label className="checkbox">
-              <input type="checkbox" checked={gateForm.require_backtest_pass}
-                onChange={(e) => setGateForm((c) => ({ ...c, require_backtest_pass: e.target.checked }))} />
-              <span>Require the rolling backtest to have completed.</span>
-            </label>
-            <label className="checkbox">
-              <input type="checkbox" checked={gateForm.require_package_validation}
-                onChange={(e) => setGateForm((c) => ({ ...c, require_package_validation: e.target.checked }))} />
-              <span>Require export package validation to pass before recommending promotion.</span>
-            </label>
+              </Field>
+            </FormGrid>
 
-            <div className="btn-row end">
-              <Action onClick={saveGate} busy={busy} busyLabel="Saving…"
-                disabledReason={!gateApprover.trim() ? "Enter an approver name." : undefined}>
-                <Icon name="how_to_reg" size={15} /> Approve this gate
-              </Action>
+            <div style={{ marginTop: 12 }}>
+              <CheckRow checked={gateForm.require_backtest_pass}
+                onChange={(value) => setGateForm((c) => ({ ...c, require_backtest_pass: value }))}>
+                Require the rolling backtest to have completed.
+              </CheckRow>
+              <CheckRow checked={gateForm.require_package_validation}
+                onChange={(value) => setGateForm((c) => ({ ...c, require_package_validation: value }))}>
+                Require export package validation to pass before recommending promotion.
+              </CheckRow>
             </div>
+
+            <ActionRow>
+              <Btn onClick={saveGate} busy={busy} busyLabel="Saving…"
+                disabledReason={!gateApprover.trim() ? "Enter an approver name." : undefined}>
+                <MIcon name="how_to_reg" size={15} /> Approve this gate
+              </Btn>
+            </ActionRow>
           </>
         )}
-      </Panel>
+      </Card>
 
-      <Panel title="Benchmark" icon="compare_arrows"
-        subtitle={comparison?.benchmark?.note}
-        actions={
-          <select value={runId || ""} onChange={(e) => setRunId(e.target.value)} aria-label="Run to compare">
-            {runs.map((run) => (
-              <option key={run.run_id} value={run.run_id}>
-                {run.run_id} · {when(run.created_at)}
-              </option>
-            ))}
-          </select>
-        }>
+      <Card>
+        <SectionTitle
+          sub={comparison?.benchmark?.note}
+          right={
+            <select value={runId || ""} onChange={(e) => { setRunId(e.target.value); setSelected(null); }}
+              aria-label="Run to compare" style={{ width: "auto", minWidth: 230 }}>
+              {runs.map((run) => (
+                <option key={run.run_id} value={run.run_id}>
+                  {run.run_id} · {when(run.created_at)}
+                </option>
+              ))}
+            </select>
+          }
+        >
+          Benchmark
+        </SectionTitle>
+
         <ErrorNotice error={error} />
         {!comparison ? (
-          <p className="muted small">Loading the comparison…</p>
+          <p style={{ fontSize: 12, color: "var(--nova-grey-dim)" }}>Loading the comparison…</p>
         ) : (
           <>
-            <Metrics
-              cols={4}
+            <MetricGrid
+              compact
+              min={150}
               items={[
                 { label: "Benchmark rows", value: num(comparison.benchmark.rows) },
                 { label: "Actual Non-Voice", value: num(comparison.benchmark.actual_non_voice) },
                 { label: "Actual Voice", value: num(comparison.benchmark.actual_voice) },
                 {
-                  label: "Window",
-                  value: comparison.benchmark.date_from?.slice(0, 10) || "—",
+                  label: "Window", value: comparison.benchmark.date_from?.slice(0, 10) || "—",
                   sub: comparison.benchmark.date_to?.slice(0, 10),
                 },
               ]}
             />
+
             {comparison.split?.no_future_leakage === true && (
               <Notice tone="ok" title="No future leakage">
                 Every training row predates every test row, so these numbers reflect predicting
@@ -292,7 +301,7 @@ export default function ComparisonStage({ job, progress, mark, go }) {
               </Notice>
             )}
 
-            <div className="section-title">Champion versus challengers on identical rows</div>
+            <SubHeading>Champion versus challengers on identical rows</SubHeading>
             <MetricTable
               championMetrics={championMetrics}
               championLabel={comparison.champion.model_id}
@@ -303,7 +312,7 @@ export default function ComparisonStage({ job, progress, mark, go }) {
               primary={gate?.gate?.primary_metric || "f1"}
             />
 
-            <div className="section-title">Confusion matrix at the selected threshold</div>
+            <SubHeading>Confusion matrix at the selected threshold</SubHeading>
             <Table
               columns={[
                 { key: "model", header: "Model" },
@@ -326,16 +335,17 @@ export default function ComparisonStage({ job, progress, mark, go }) {
             <BacktestSection backtest={comparison.backtest} />
           </>
         )}
-      </Panel>
+      </Card>
 
       {comparison && selected && (
-        <Panel
-          title={`Decision for ${selected}`}
-          subtitle="Promotion is a recommendation. Nothing is promoted without a typed approval."
-          icon="how_to_vote"
-          tone={GATE_TONE[approval?.decision === "APPROVED" ? "APPROVED" : gateResult?.status] || ""}
-          actions={<Pill tone={GATE_TONE[gateResult?.status] || "muted"}>{gateResult?.status || "—"}</Pill>}
-        >
+        <Card borderSize={2}>
+          <SectionTitle
+            sub="Promotion is a recommendation. Nothing is promoted without a typed approval."
+            right={<Pill tone={GATE_TONE[gateResult?.status] || "muted"}>{gateResult?.status || "—"}</Pill>}
+          >
+            Decision for {selected}
+          </SectionTitle>
+
           {gateResult?.blockers?.length > 0 && (
             <Notice tone="bad" title="Blocked">
               <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
@@ -343,6 +353,7 @@ export default function ComparisonStage({ job, progress, mark, go }) {
               </ul>
             </Notice>
           )}
+
           {gateResult?.rules?.length > 0 && (
             <Table
               columns={[
@@ -351,7 +362,9 @@ export default function ComparisonStage({ job, progress, mark, go }) {
                 { key: "challenger", header: "Challenger", className: "num", render: (r) => metric(r.challenger) },
                 {
                   key: "delta_pct", header: "Δ%", className: "num",
-                  render: (r) => (r.delta_pct == null ? "—" : `${r.delta_pct > 0 ? "+" : ""}${r.delta_pct.toFixed(2)}%`),
+                  render: (r) => (r.delta_pct == null
+                    ? "—" : `${r.delta_pct > 0 ? "+" : ""}${r.delta_pct.toFixed(2)}%`),
+                  tone: (r) => (r.delta_pct == null ? null : r.delta_pct >= 0 ? "ok" : "bad"),
                 },
                 {
                   key: "passed", header: "Result",
@@ -364,57 +377,64 @@ export default function ComparisonStage({ job, progress, mark, go }) {
           )}
 
           {approval ? (
-            <Notice tone={approval.decision === "APPROVED" ? "ok" : "warn"}
-              title={`${approval.decision} by ${approval.approver} on ${when(approval.approved_at)}`}>
-              <p>{approval.notes || "No notes recorded."}</p>
+            <Notice
+              tone={approval.decision === "APPROVED" ? "ok" : "warn"}
+              title={`${approval.decision} by ${approval.approver} on ${when(approval.approved_at)}`}
+            >
+              <p style={{ margin: 0 }}>{approval.notes || "No notes recorded."}</p>
               {approval.override_of_recommendation && (
-                <p><strong>This was an override:</strong> the gate did not recommend promotion.</p>
+                <p style={{ margin: "6px 0 0" }}>
+                  <strong>This was an override:</strong> the gate did not recommend promotion.
+                </p>
               )}
               {approval.decision === "APPROVED" && (
-                <div className="btn-row end">
-                  <Action onClick={() => go("export")}>
-                    Build the export package <Icon name="arrow_forward" size={15} />
-                  </Action>
-                </div>
+                <ActionRow>
+                  <Btn onClick={() => go("export")}>
+                    Build the export package <MIcon name="arrow_forward" size={15} />
+                  </Btn>
+                </ActionRow>
               )}
             </Notice>
           ) : (
             <>
-              <div className="grid-3">
-                <div className="field">
-                  <label htmlFor="promo-approver">Approved by</label>
+              <FormGrid min={200}>
+                <Field label="Approved by" htmlFor="promo-approver">
                   <input id="promo-approver" type="text" placeholder="Your name" value={approver}
                     onChange={(e) => setApprover(e.target.value)} />
-                </div>
-                <div className="field">
-                  <label htmlFor="promo-typed">Type the candidate id to confirm</label>
+                </Field>
+                <Field
+                  label="Type the candidate id to confirm" htmlFor="promo-typed"
+                  hint={<>Exactly <code>{selected}</code>.</>}
+                >
                   <input id="promo-typed" type="text" placeholder={selected} value={typed}
-                    onChange={(e) => setTyped(e.target.value)} className="mono" />
-                  <span className="hint">Exactly <code>{selected}</code>.</span>
-                </div>
-                <div className="field">
-                  <label htmlFor="promo-notes">Notes</label>
+                    onChange={(e) => setTyped(e.target.value)}
+                    style={{ fontFamily: "'DM Mono',monospace" }} />
+                </Field>
+                <Field label="Notes" htmlFor="promo-notes">
                   <input id="promo-notes" type="text" value={notes} onChange={(e) => setNotes(e.target.value)} />
-                </div>
-              </div>
-              <div className="btn-row end">
-                <button type="button" className="btn ghost" disabled={busy || !approver.trim() || typed.trim() !== selected}
-                  onClick={() => approve("REJECTED")}>
-                  <Icon name="block" size={15} /> Record rejection
-                </button>
-                <Action onClick={() => approve("APPROVED")} busy={busy} busyLabel="Recording…"
+                </Field>
+              </FormGrid>
+              <ActionRow>
+                <Btn variant="ghost" onClick={() => approve("REJECTED")}
+                  disabledReason={
+                    !approver.trim() ? "Enter an approver name."
+                      : typed.trim() !== selected ? "Type the candidate id exactly." : undefined
+                  }>
+                  <MIcon name="block" size={15} /> Record rejection
+                </Btn>
+                <Btn onClick={() => approve("APPROVED")} busy={busy} busyLabel="Recording…"
                   disabledReason={
                     !approver.trim() ? "Enter an approver name."
                       : typed.trim() !== selected ? "Type the candidate id exactly."
                       : gateResult?.status === "BLOCKED" ? "This candidate is blocked; resolve the blockers first."
                       : undefined
                   }>
-                  <Icon name="how_to_reg" size={15} /> Approve promotion
-                </Action>
-              </div>
+                  <MIcon name="how_to_reg" size={15} /> Approve promotion
+                </Btn>
+              </ActionRow>
             </>
           )}
-        </Panel>
+        </Card>
       )}
     </>
   );
@@ -430,40 +450,65 @@ function cmRow(model, metrics, latency) {
 }
 
 function MetricTable({ championMetrics, championLabel, championThreshold, candidates, selected, onSelect, primary }) {
+  const { theme } = useTheme();
+  const isDark = theme === "dark";
+  const border = isDark ? "#2A2C4A" : "#E4E8F0";
+  const th = {
+    padding: "8px 11px", background: isDark ? "#1A1C2E" : "#F5F7FC",
+    borderBottom: `1px solid ${border}`, whiteSpace: "nowrap", fontSize: 9.5,
+    letterSpacing: 0.8, textTransform: "uppercase", fontFamily: "'DM Mono',monospace",
+    fontWeight: 700, color: isDark ? "#8892A0" : C.indigo, position: "sticky", top: 0,
+  };
+  const td = {
+    padding: "7px 11px", borderBottom: `1px solid ${border}`, whiteSpace: "nowrap",
+    textAlign: "right", fontFamily: "'DM Mono',monospace",
+  };
+
   return (
-    <div className="table-wrap">
-      <table>
+    <div style={{ overflowX: "auto", border: `1px solid ${border}`, borderRadius: 8 }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
         <thead>
           <tr>
-            <th scope="col">Model</th>
-            <th scope="col">Threshold</th>
+            <th scope="col" style={{ ...th, textAlign: "left" }}>Model</th>
+            <th scope="col" style={th}>Threshold</th>
             {METRIC_KEYS.map(([key, label]) => (
-              <th key={key} scope="col">{label}{key === primary ? " ★" : ""}</th>
+              <th key={key} scope="col" style={th}>{label}{key === primary ? " ★" : ""}</th>
             ))}
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td><strong>CHAMPION</strong> · <span className="mono">{championLabel}</span></td>
-            <td className="num">{championThreshold}</td>
+            <td style={{ ...td, textAlign: "left", fontFamily: "inherit" }}>
+              <strong>CHAMPION</strong> · <code>{championLabel}</code>
+            </td>
+            <td style={td}>{championThreshold}</td>
             {METRIC_KEYS.map(([key]) => (
-              <td className="num" key={key}>{metric(championMetrics[key])}</td>
+              <td style={td} key={key}>{metric(championMetrics[key])}</td>
             ))}
           </tr>
           {candidates.map(([id, value]) => (
-            <tr key={id} className={selected === id ? "highlight" : ""}>
-              <td>
+            <tr key={id} style={selected === id ? { background: isDark ? "#1B2436" : "#EEF3FF" } : undefined}>
+              <td style={{ ...td, textAlign: "left", fontFamily: "inherit" }}>
                 <label style={{ display: "flex", gap: 6, alignItems: "center", cursor: "pointer" }}>
-                  <input type="radio" name="candidate" checked={selected === id} onChange={() => onSelect(id)} />
-                  <span className="mono">{id}</span>
+                  <input type="radio" name="candidate" checked={selected === id}
+                    onChange={() => onSelect(id)} style={{ accentColor: C.green, width: "auto" }} />
+                  <code>{id}</code>
                 </label>
               </td>
-              <td className="num">{value.selected_threshold}</td>
+              <td style={td}>{value.selected_threshold}</td>
               {METRIC_KEYS.map(([key]) => {
                 const change = delta(value.test_metrics?.[key], championMetrics[key]);
                 const better = key === "brier_score" ? change < 0 : change > 0;
+                const meaningful = change != null && Math.abs(change) >= 0.05;
                 return (
-                  <td className={`num ${change == null || Math.abs(change) < 0.05 ? "" : better ? "win" : "lose"}`} key={key}>
+                  <td
+                    key={key}
+                    style={{
+                      ...td,
+                      color: meaningful ? (better ? C.green : "#EF4444") : undefined,
+                      fontWeight: meaningful ? 700 : 400,
+                    }}
+                  >
                     {metric(value.test_metrics?.[key])}
                   </td>
                 );
@@ -482,26 +527,29 @@ function PeriodSection({ comparison, selected }) {
   if (!champion.length) return null;
   // Matched by period name, never by array position: a period the challenger
   // skipped would otherwise shift every later row and pair the wrong numbers.
-  const challengerByPeriod = Object.fromEntries(challenger.map((row) => [row.period, row]));
+  const byPeriod = Object.fromEntries(challenger.map((row) => [row.period, row]));
   const rows = champion.map((row) => {
-    const pair = challengerByPeriod[row.period];
+    const pair = byPeriod[row.period];
     return {
-      period: row.period,
-      rows: row.rows,
-      champion_f1: row.f1,
-      challenger_f1: pair?.f1,
-      skipped: row.skipped || pair?.skipped,
+      period: row.period, rows: row.rows, champion_f1: row.f1,
+      challenger_f1: pair?.f1, skipped: row.skipped || pair?.skipped,
     };
   });
   return (
     <>
-      <div className="section-title">Performance by period</div>
+      <SubHeading>Performance by period</SubHeading>
       <Table
         columns={[
           { key: "period", header: "Month" },
           { key: "rows", header: "Rows", className: "num", render: (r) => num(r.rows) },
-          { key: "champion_f1", header: "Champion F1", className: "num", render: (r) => (r.skipped ? "—" : metric(r.champion_f1)) },
-          { key: "challenger_f1", header: "Challenger F1", className: "num", render: (r) => (r.skipped ? "—" : metric(r.challenger_f1)) },
+          {
+            key: "champion_f1", header: "Champion F1", className: "num",
+            render: (r) => (r.skipped ? "—" : metric(r.champion_f1)),
+          },
+          {
+            key: "challenger_f1", header: "Challenger F1", className: "num",
+            render: (r) => (r.skipped ? "—" : metric(r.challenger_f1)),
+          },
           { key: "skipped", header: "Note", render: (r) => r.skipped || "" },
         ]}
         rows={rows}
@@ -516,14 +564,25 @@ function SegmentSection({ comparison, selected }) {
   const challenger = comparison.segment_breakdown?.[selected] || [];
   if (!champion.length) return null;
   const byName = Object.fromEntries(challenger.map((row) => [row.segment, row]));
+  const allSkipped = champion.every((row) => row.skipped);
   return (
     <>
-      <div className="section-title">Performance by segment</div>
+      <SubHeading>Performance by segment</SubHeading>
+      {allSkipped && (
+        <Notice tone="info" title="Every segment was skipped">
+          When labels are derived from SubTask, each SubTask segment is single-class by
+          construction, so a per-SubTask metric is undefined. Choose a different segment column in
+          the promotion gate for a meaningful breakdown.
+        </Notice>
+      )}
       <Table
         columns={[
           { key: "segment", header: "Segment" },
           { key: "rows", header: "Rows", className: "num", render: (r) => num(r.rows) },
-          { key: "champion_f1", header: "Champion F1", className: "num", render: (r) => (r.skipped ? "—" : metric(r.f1)) },
+          {
+            key: "champion_f1", header: "Champion F1", className: "num",
+            render: (r) => (r.skipped ? "—" : metric(r.f1)),
+          },
           {
             key: "challenger_f1", header: "Challenger F1", className: "num",
             render: (r) => (r.skipped ? "—" : metric(byName[r.segment]?.f1)),
@@ -542,15 +601,17 @@ function BacktestSection({ backtest }) {
   if (!entries.length) return null;
   return (
     <>
-      <div className="section-title">Rolling-origin backtest — stability over time</div>
+      <SubHeading>Rolling-origin backtest — stability over time</SubHeading>
       {entries.map(([modelType, result]) => (
-        <div key={modelType} style={{ marginBottom: 12 }}>
-          <div className="row" style={{ marginBottom: 6 }}>
-            <strong>{modelType.toUpperCase()}</strong>
-            {result.error ? <Pill tone="warn">skipped</Pill> : <Pill tone="info">{result.n_windows} windows</Pill>}
+        <div key={modelType} style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
+            <strong style={{ fontSize: 12 }}>{modelType.toUpperCase()}</strong>
+            {result.error
+              ? <Pill tone="warn">skipped</Pill>
+              : <Pill tone="info">{result.n_windows} windows</Pill>}
           </div>
           {result.error ? (
-            <p className="muted small">{result.error}</p>
+            <p style={{ fontSize: 12, color: "var(--nova-grey-dim)", margin: 0 }}>{result.error}</p>
           ) : (
             <Table
               columns={[
@@ -567,7 +628,7 @@ function BacktestSection({ backtest }) {
             />
           )}
           {result.summary?.f1 && (
-            <p className="muted small" style={{ marginTop: 6 }}>
+            <p style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 6 }}>
               F1 across windows: mean {metric(result.summary.f1.mean)}, spread{" "}
               {metric(result.summary.f1.min)}–{metric(result.summary.f1.max)} (std{" "}
               {metric(result.summary.f1.std)}). A wide spread means this placement is unstable over
@@ -578,9 +639,4 @@ function BacktestSection({ backtest }) {
       ))}
     </>
   );
-}
-
-function stripGate(gate) {
-  const { approved, approver, ...rest } = gate;
-  return rest;
 }

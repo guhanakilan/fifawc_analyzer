@@ -9,7 +9,7 @@ The existing NoVA ML application is never modified. The uploaded champion, its
 original data and every previously exported version are immutable.
 
 * Backend: FastAPI + SQLite (metadata only; large files live on disk)
-* Frontend: React + Vite
+* Frontend: React + Vite, using the NoVA ML Workbench's own design language
 * Models: scikit-learn, XGBoost, LightGBM, Optuna
 * No Bedrock, no OpenAI, no paid cloud service, no mandatory outbound network call
 
@@ -46,7 +46,7 @@ Close both console windows to stop the application. Everything it wrote stays in
 |---|---|---|
 | 01 Champion Package | Validates and extracts the NoVA export ZIP | Open any `.pkl` during intake |
 | 02 Training Data | Streams and profiles labelled Parquet/CSV/Excel | Load a 2 GB CSV into memory |
-| 03 Readiness | Confirms the rules, then freezes an immutable snapshot | Infer a deduplication key or map a new SubTask |
+| 03 Readiness | Confirms the rules, then freezes an immutable snapshot | Infer a deduplication key, map a new SubTask, or train on model output |
 | 04 Weight Strategy | Previews and approves sample weights | Apply a weight nobody approved |
 | 05 Retrain & Tune | Trains challengers in a cancellable background job | Reuse the champion's fitted state as a challenger's |
 | 06 Comparison | Scores champion and challengers on identical rows | Pick a "best" model by an assumed metric |
@@ -103,6 +103,21 @@ tagged = pipeline.run_ml_tag(inventory_df)   # original columns + ml_tag only
 
 `run_ml_tag()` refuses to run on a package whose `ml_tag` convention was never
 approved. It never returns a probability or Voice/Non-Voice text.
+
+## Optional: prove compatibility against the verbatim nova-ml client
+
+Stage 07 always validates the package through the scoring runtime it ships. It can
+*additionally* run the built package through nova-ml's own unmodified
+`scoring_client/scoring.py` and record the outcome as non-blocking evidence:
+
+```bat
+set NOVA_ENHANCER_REFERENCE_SCORING=C:\path\to\nova-ml\scoring_client\scoring.py
+start.bat
+```
+
+Expect that check to report a warning: the reference client cannot read a real
+nova-ml export (defect D1 in `IMPLEMENTATION_GAP_ANALYSIS.md`). That warning is the
+point — it is recorded so the defect stays visible rather than being assumed fixed.
 
 ## Rollback
 
@@ -170,7 +185,15 @@ exactly which check failed. This is the intended behaviour: a package that canno
 correctly must never be handed to a deployment.
 
 **The UI looks unstyled.** The DM Sans webfont could not load (no outbound network).
-The layout, icons and colours are all local, so only the typeface changes.
+The layout, icons and colours are all local, so only the typeface changes. Icons are
+inline SVG rather than the Material Symbols webfont the reference app uses, precisely
+so a missing network cannot leave raw ligature text on screen.
+
+**"This column is model output".** You selected `ml_tag`, `VoiceNonVoiceFlag` or
+`NovaProbability` as the training label. Those are written by a scoring run, so
+training on them teaches the challenger to agree with the champion instead of with
+reality. Pick a human-verified column, derive labels from SubTask mappings, or tick
+the acknowledgement if those rows really were corrected by a person after scoring.
 
 ## Known limitations
 

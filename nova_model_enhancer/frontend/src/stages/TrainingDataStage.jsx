@@ -2,8 +2,9 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  Action, DropZone, Empty, ErrorNotice, Icon, Metrics, Notice, Panel, Table,
-} from "../components/Ui.jsx";
+  ActionRow, Badge, Btn, C, Card, DropZone, EmptyState, ErrorNotice, Field,
+  FormGrid, MIcon, MetricGrid, Notice, SectionTitle, SubHeading, Table,
+} from "../nova/Components.jsx";
 import { num, shortHash, when } from "../format.js";
 
 const ROLES = [
@@ -37,15 +38,7 @@ export default function TrainingDataStage({ job, mark, go }) {
     refresh();
   }, [refresh]);
 
-  if (!job) {
-    return (
-      <Panel title="No active job" icon="info">
-        <Notice tone="warn" title="Start at Stage 01">
-          Upload a valid champion package before adding training data.
-        </Notice>
-      </Panel>
-    );
-  }
+  if (!job) return <NoJob />;
 
   const upload = async () => {
     setBusy(true);
@@ -75,28 +68,26 @@ export default function TrainingDataStage({ job, mark, go }) {
 
   return (
     <>
-      <Panel
-        title="Labelled training data"
-        subtitle="Parquet is preferred. CSV and Excel are also accepted; large delimited files are streamed rather than loaded whole."
-        icon="database"
-      >
-        <div className="grid-2">
-          <div className="field">
-            <label htmlFor="data-role">What this file contains</label>
+      <Card>
+        <SectionTitle sub="Parquet is preferred. CSV and Excel are also accepted; large delimited files are streamed rather than loaded whole.">
+          Labelled training data
+        </SectionTitle>
+
+        <FormGrid style={{ marginBottom: 14 }}>
+          <Field
+            label="What this file contains"
+            htmlFor="data-role"
+            hint="Upload several files if your history and your new verified rows are separate. They are concatenated when the snapshot is built."
+          >
             <select id="data-role" value={role} onChange={(event) => setRole(event.target.value)}>
               {ROLES.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
+                <option key={option.value} value={option.value}>{option.label}</option>
               ))}
             </select>
-            <span className="hint">
-              Upload several files if your history and your new verified rows are separate. They are
-              concatenated when the snapshot is built.
-            </span>
-          </div>
+          </Field>
           <div />
-        </div>
+        </FormGrid>
+
         <DropZone
           accept=".parquet,.csv,.xlsx,.xls"
           label="Choose a labelled dataset"
@@ -108,103 +99,102 @@ export default function TrainingDataStage({ job, mark, go }) {
           }}
           disabled={busy}
         />
-        <div className="btn-row end">
-          <Action
+        <ActionRow>
+          <Btn
             onClick={upload}
             busy={busy}
             busyLabel="Reading and profiling…"
             disabledReason={!file ? "Choose a file first." : undefined}
           >
-            <Icon name="upload" size={15} /> Upload &amp; profile
-          </Action>
-        </div>
+            <MIcon name="upload" size={15} /> Upload &amp; profile
+          </Btn>
+        </ActionRow>
         <ErrorNotice error={error} title="The file could not be used" />
-      </Panel>
+      </Card>
 
-      <Panel
-        title="Uploaded datasets"
-        subtitle={
-          assets.length
+      <Card>
+        <SectionTitle
+          sub={assets.length
             ? `${assets.length} file(s), ${num(totalRows)} rows in total.`
-            : "Nothing uploaded yet."
-        }
-        icon="folder_open"
-        actions={
-          <button type="button" className="btn ghost" onClick={refresh}>
-            <Icon name="refresh" size={15} /> Refresh
-          </button>
-        }
-      >
+            : "Nothing uploaded yet."}
+          right={<Btn variant="ghost" small onClick={refresh}>
+            <MIcon name="refresh" size={14} /> Refresh
+          </Btn>}
+        >
+          Uploaded datasets
+        </SectionTitle>
+
         {loading ? (
-          <p className="muted small">Loading…</p>
+          <p style={{ fontSize: 12, color: "var(--nova-grey-dim)" }}>Loading…</p>
         ) : assets.length === 0 ? (
-          <Empty icon="database">Upload at least one labelled dataset to continue.</Empty>
+          <EmptyState icon="database">Upload at least one labelled dataset to continue.</EmptyState>
         ) : (
-          assets.map((asset) => <AssetCard key={asset.asset_id} asset={asset} onRemove={remove} />)
+          assets.map((asset) => <AssetBlock key={asset.asset_id} asset={asset} onRemove={remove} />)
         )}
 
         {assets.length > 0 && (
-          <div className="btn-row end">
-            <Action onClick={() => go("readiness")}>
-              Review readiness <Icon name="arrow_forward" size={15} />
-            </Action>
-          </div>
+          <ActionRow>
+            <Btn onClick={() => go("readiness")}>
+              Review readiness <MIcon name="arrow_forward" size={15} />
+            </Btn>
+          </ActionRow>
         )}
-      </Panel>
+      </Card>
     </>
   );
 }
 
-function AssetCard({ asset, onRemove }) {
+function AssetBlock({ asset, onRemove }) {
   const summary = asset.summary || {};
   const drift = summary.schema_drift;
   return (
-    <div style={{ marginBottom: 18 }}>
-      <div className="row" style={{ marginBottom: 8 }}>
-        <strong>{asset.original_filename}</strong>
-        <span className="chip">{asset.role}</span>
-        <span className="chip mono">{asset.file_type}</span>
-        <span className="spacer" />
-        <span className="small muted mono">sha256 {shortHash(asset.sha256)}</span>
-        <button type="button" className="btn danger" onClick={() => onRemove(asset.asset_id)}>
-          <Icon name="delete" size={14} /> Remove
-        </button>
+    <div style={{ marginBottom: 22 }}>
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <strong style={{ fontSize: 13 }}>{asset.original_filename}</strong>
+        <Badge small>{asset.role}</Badge>
+        <Badge small color={C.indigo} bg="#EEF1FF">{asset.file_type}</Badge>
+        <span style={{ flex: 1 }} />
+        <span style={{ fontSize: 11, color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace" }}>
+          sha256 {shortHash(asset.sha256)}
+        </span>
+        <Btn variant="danger" small onClick={() => onRemove(asset.asset_id)}>
+          <MIcon name="delete" size={14} /> Remove
+        </Btn>
       </div>
-      <Metrics
+
+      <MetricGrid
+        compact
+        min={135}
         items={[
           { label: "Rows", value: num(summary.rows) },
           { label: "Columns", value: num(summary.columns) },
-          { label: "Duplicate rows", value: num(summary.duplicate_rows) },
-          { label: "Distinct SubTasks", value: num(summary.distinct_subtasks) },
-          { label: "Date column", value: summary.date_column_detected || "None detected" },
+          { label: "Duplicates", value: num(summary.duplicate_rows), color: summary.duplicate_rows ? "#F59E0B" : C.navy },
+          { label: "SubTasks", value: num(summary.distinct_subtasks) },
+          { label: "Date column", value: summary.date_column_detected || "none" },
           {
-            label: "Date range",
-            value: summary.min_date ? when(summary.min_date) : "—",
-            sub: summary.max_date ? `to ${when(summary.max_date)}` : undefined,
-          },
-          {
-            label: "Unparseable dates",
+            label: "Bad dates",
             value: num(summary.invalid_dates),
-            sub: summary.invalid_dates ? "These rows sort oldest and stay in train" : undefined,
-          },
-          {
-            label: "Label column",
-            value: summary.target_column_detected || "None detected",
-            sub: summary.target_column_detected
-              ? undefined
-              : "Labels will be derived from SubTask mappings",
+            color: summary.invalid_dates ? "#F59E0B" : C.navy,
+            sub: summary.invalid_dates ? "sort oldest, stay in train" : undefined,
           },
         ]}
       />
 
+      <div style={{ fontSize: 12, color: "var(--nova-grey-dim)", marginTop: 10 }}>
+        {summary.min_date
+          ? `Date range ${when(summary.min_date)} → ${when(summary.max_date)}`
+          : "No parseable dates in this file."}
+        {summary.target_column_detected
+          ? ` · label column detected: ${summary.target_column_detected}`
+          : " · no label column detected, labels will be derived from SubTask mappings"}
+      </div>
+
       {summary.class_distribution && Object.keys(summary.class_distribution).length > 0 && (
         <>
-          <div className="section-title">Label distribution as uploaded</div>
-          <div className="row">
+          <SubHeading>Label distribution as uploaded</SubHeading>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             {Object.entries(summary.class_distribution).map(([key, value]) => (
-              <span className="chip" key={key}>
-                {key}: {num(value)}
-              </span>
+              <Badge key={key}>{key}: {num(value)}</Badge>
             ))}
           </div>
         </>
@@ -212,10 +202,11 @@ function AssetCard({ asset, onRemove }) {
 
       {drift && (
         <>
-          <div className="section-title">Schema drift against the champion configuration</div>
+          <SubHeading>Schema drift against the champion configuration</SubHeading>
           {drift.missing_column_count === 0 && drift.new_column_count === 0 ? (
             <Notice tone="ok" title="No drift detected">
-              Every column the champion configuration expects is present.
+              Every column the champion configuration expects is present, after applying its own
+              inventory→production rename map.
             </Notice>
           ) : (
             <Notice
@@ -223,14 +214,14 @@ function AssetCard({ asset, onRemove }) {
               title={`${drift.missing_column_count} expected column(s) missing, ${drift.new_column_count} new column(s)`}
             >
               {drift.missing_column_count > 0 && (
-                <p>
+                <p style={{ margin: "0 0 6px" }}>
                   <strong>Missing:</strong> {drift.missing_columns.join(", ")}. A missing feature is
                   filled with zero at scoring time, which silently weakens the model — resolve it
                   before training rather than after.
                 </p>
               )}
               {drift.new_column_count > 0 && (
-                <p>
+                <p style={{ margin: 0 }}>
                   <strong>New:</strong> {drift.new_columns.slice(0, 20).join(", ")}. New columns are
                   ignored unless the champion's feature selection names them.
                 </p>
@@ -242,7 +233,7 @@ function AssetCard({ asset, onRemove }) {
 
       {summary.top_subtasks?.length > 0 && (
         <>
-          <div className="section-title">Most frequent SubTasks</div>
+          <SubHeading>Most frequent SubTasks</SubHeading>
           <Table
             columns={[
               { key: "subtask", header: "SubTask" },
@@ -254,5 +245,16 @@ function AssetCard({ asset, onRemove }) {
         </>
       )}
     </div>
+  );
+}
+
+export function NoJob() {
+  return (
+    <Card>
+      <SectionTitle sub="Upload a valid champion package in Stage 01 before continuing.">
+        No active job
+      </SectionTitle>
+      <EmptyState icon="inventory_2">This stage needs a champion package to work against.</EmptyState>
+    </Card>
   );
 }

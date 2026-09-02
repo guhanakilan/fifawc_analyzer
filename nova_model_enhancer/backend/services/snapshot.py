@@ -70,14 +70,48 @@ def atomic_write_text(text: str, destination: Path) -> None:
             tmp_path.unlink(missing_ok=True)
 
 
+def _canonical_label(value) -> str:
+    """Render a label value so dtype cannot change what it compares equal to.
+
+    A label column arrives as int64, float64, string or bool depending on the
+    file format and whether it ever held a null. Without this, an approved
+    encoding of "0"/"1" silently fails to match a float column's "0.0"/"1.0"
+    and every row is reported as an unapproved label.
+    """
+    if value is None or (isinstance(value, float) and value != value):
+        return ""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, np.integer)):
+        return str(int(value))
+    if isinstance(value, (float, np.floating)):
+        return str(int(value)) if float(value).is_integer() else str(value)
+    text = str(value).strip().lower()
+    # "1.0" typed into the approval form, or read back from a float column.
+    try:
+        as_float = float(text)
+    except ValueError:
+        return text
+    return str(int(as_float)) if as_float.is_integer() else text
+
+
 def _coerce_target(series: pd.Series, encoding: dict) -> pd.Series:
     """Map an existing label column onto the internal 0=Voice / 1=Non-Voice."""
-    voice_values = {str(v).strip().lower() for v in encoding.get("voice_values", [encoding.get("voice", 0)])}
-    nv_values = {str(v).strip().lower() for v in encoding.get("non_voice_values", [encoding.get("non_voice", 1)])}
-    text = series.astype(str).str.strip().str.lower()
+    voice_values = {
+        _canonical_label(v) for v in encoding.get("voice_values", [encoding.get("voice", 0)])
+    }
+    nv_values = {
+        _canonical_label(v) for v in encoding.get("non_voice_values", [encoding.get("non_voice", 1)])
+    }
+    overlap = voice_values & nv_values
+    if overlap:
+        raise SnapshotError(
+            f"The approved encoding maps the same value(s) to both classes: {sorted(overlap)}."
+        )
+    canonical = series.map(_canonical_label)
     out = pd.Series(np.nan, index=series.index, dtype="float64")
-    out[text.isin(voice_values)] = labeling.VOICE
-    out[text.isin(nv_values)] = labeling.NON_VOICE
+    out[canonical.isin(voice_values)] = labeling.VOICE
+    out[canonical.isin(nv_values)] = labeling.NON_VOICE
     return out
 
 
@@ -152,10 +186,13 @@ def build_snapshot(
         mapped = _coerce_target(df[target_col], decisions.target_encoding)
         unmapped = int(mapped.isna().sum())
         if unmapped:
+            offending = sorted(
+                {str(v) for v in df.loc[mapped.isna(), target_col].unique()[:8]}
+            )
             raise SnapshotError(
-                f"{unmapped} row(s) carry a label value outside the approved encoding for "
-                f"'{target_col}'. Fix the data or correct the approved encoding — the "
-                "enhancer will not guess a label."
+                f"{unmapped} row(s) in '{target_col}' carry a label value outside the approved "
+                f"encoding. Unrecognised value(s): {', '.join(offending)}. Fix the data or "
+                "correct the approved encoding — the enhancer will not guess a label."
             )
         df = df.copy()
         df[TARGET] = mapped.astype(int)

@@ -45,14 +45,20 @@ def build_comparison(
     df = snapshot_service.load_snapshot(snapshot_dir, snapshot_id)
     manifest = snapshot_service.load_manifest(snapshot_dir, snapshot_id)
     date_column = manifest["date_column"]
-    dates = pd.to_datetime(df[date_column], errors="coerce").reset_index(drop=True).iloc[test_indices]
+    # reset_index after the positional slice: every array downstream is
+    # positional, and leaving the original labels on the Series would make the
+    # pairing depend on pandas' alignment rules rather than on position.
+    dates = (
+        pd.to_datetime(df[date_column], errors="coerce")
+        .reset_index(drop=True).iloc[test_indices].reset_index(drop=True)
+    )
 
     segments = None
     if segment_column:
         from .data_profiler import match_column
         resolved = match_column(df.columns, segment_column)
         if resolved:
-            segments = df[resolved].reset_index(drop=True).iloc[test_indices]
+            segments = df[resolved].reset_index(drop=True).iloc[test_indices].reset_index(drop=True)
 
     champion_threshold = float((run.get("champion") or {}).get("threshold", 0.5))
     champion_metrics = evaluator.metrics_at_threshold(y_test, champion_proba, champion_threshold)

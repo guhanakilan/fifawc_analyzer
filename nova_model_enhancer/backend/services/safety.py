@@ -50,3 +50,18 @@ def resolve_within(root: Path, *parts: str) -> Path:
     if candidate != root and root not in candidate.parents:
         raise UnsafeIdentifier("Resolved path escaped its owning directory.")
     return candidate
+
+
+_PATH_RE = re.compile(r"(?:[A-Za-z]:)?[\\/](?:[\w .~-]+[\\/])+[\w .~-]*")
+
+
+def scrub(message: object, limit: int = 400) -> str:
+    """Strip filesystem paths out of a message before it reaches the UI.
+
+    Library exceptions routinely embed the file they were reading. That reveals
+    the workspace layout to anyone who can see an error toast, and the path is
+    never the part of the message a user can act on — the reason is.
+    """
+    text = str(message)
+    text = _PATH_RE.sub("<path>", text)
+    return text[:limit]

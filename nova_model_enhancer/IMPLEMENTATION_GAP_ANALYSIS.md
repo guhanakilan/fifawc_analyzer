@@ -3,6 +3,13 @@
 Reference application: `nova_ml_reference_source.zip` (read-only).
 Replacement application: NoVA Model Enhancer (this project).
 
+**Reference version check.** A second reference drop,
+`novamlenhancementmodelimprovement_5.zip` ("the updated NoVA ML workbench"), was
+supplied later. It contains the same 93 files and every one has an identical SHA-256
+to the first drop — the two trees are byte-identical. Nothing in this document changed
+as a result, and every defect in §4 is still present in the version currently
+considered current.
+
 Every contract below was read out of the reference source, not assumed. File and
 line references are to the reference tree as extracted from the handoff ZIP.
 
@@ -148,6 +155,17 @@ load-bearing for Stage 7 validation.
 loaded JSON as a list of row dicts. The real file is a dict with a `column_map`
 key, so iteration yields the string `"column_map"` and `r.get(...)` raises
 `AttributeError`. A verbatim reference loader cannot read a real nova-ml export.
+
+*Reproduced, not inferred.* Pointing `NOVA_ENHANCER_REFERENCE_SCORING` at the
+reference client and running a package this application built produces:
+
+```
+Reference client raised AttributeError: 'str' object has no attribute 'get'
+```
+
+`backend/tests/test_reference_defects.py::test_d1_reference_client_cannot_read_a_real_column_map`
+asserts this against the reference source itself; it skips when the reference tree is
+not present.
 
 **D2 — `feature_selection.json` wrapper.** Same class of bug, but silent instead of
 loud: iterating the dict yields `"selected_columns"`, that name matches no column,

@@ -11,7 +11,7 @@ import pandas as pd
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
-from ..config import MAX_INVENTORY_BYTES, job_dir
+from ..config import MAX_INVENTORY_BYTES, job_dir, reference_scoring_path
 from ..database import (
     create_export,
     get_decision,
@@ -27,16 +27,13 @@ from ..schemas import ExportRequestBody, MlTagApprovalRequest
 from ..services import comparison as comparison_service
 from ..services import exporter, report as report_service, snapshot as snapshot_service
 from ..services.data_profiler import DataReadError, read_dataset
-from ..services.safety import assert_safe_id, safe_filename
+from ..services.safety import assert_safe_id, safe_filename, scrub
 from .comparison import _gate_for
 from .packages import require_job
 from .readiness import _job_paths
 
 router = APIRouter(prefix="/api/export", tags=["7 · Export & validation"])
 
-# The verbatim reference client, kept for evidence in the smoke test. Present
-# only when the reference tree has been placed beside this application.
-REFERENCE_SCORING = Path(__file__).resolve().parents[2] / "reference" / "scoring_client" / "scoring.py"
 
 
 @router.get("/{job_id}/ml-tag")
@@ -117,10 +114,10 @@ def upload_inventory_sample(job_id: str, file: UploadFile = File(...)):
             raise DataReadError("The inventory sample contains no rows.")
     except DataReadError as exc:
         stored_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=scrub(exc)) from exc
     except Exception as exc:
         stored_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=422, detail=f"Could not read the sample: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"Could not read the sample: {scrub(exc)}") from exc
     finally:
         file.file.close()
 
@@ -273,7 +270,7 @@ def build(job_id: str, request: ExportRequestBody):
 
     validation = exporter.smoke_test_package(
         built["temp_path"], inventory, expected_proba, ml_tag_decision["value"],
-        reference_scoring_path=REFERENCE_SCORING if REFERENCE_SCORING.exists() else None,
+        reference_scoring_path=reference_scoring_path(),
     )
     validation["inventory_source"] = inventory_origin
     validation["expected_prediction_source"] = expectation_note

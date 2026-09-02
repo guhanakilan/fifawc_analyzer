@@ -23,8 +23,10 @@ from ..services import snapshot as snapshot_service
 from ..services.champion import load_configs
 from ..services.data_profiler import (
     DATE_CANDIDATES,
+    MODEL_OUTPUT_COLUMNS,
     TARGET_CANDIDATES,
     drift_report,
+    is_model_output,
     match_column,
     read_dataset,
 )
@@ -117,7 +119,15 @@ def review(job_id: str):
         "date_candidates": date_candidates,
         "target_candidates": target_candidates,
         "detected_date_column": date_candidates[0] if date_candidates else None,
-        "detected_target_column": target_candidates[0] if target_candidates else None,
+        "detected_target_column": next(
+            (c for c in target_candidates if not is_model_output(c)), None
+        ),
+        "model_output_columns_present": [c for c in target_candidates if is_model_output(c)],
+        "model_output_warning": (
+            "A column listed here is written by a NoVA scoring run, not verified by a person. "
+            "Training on it would feed the model its own predictions as ground truth. Choosing "
+            "one requires an explicit acknowledgement."
+        ),
         "champion_target_encoding": {
             "column": "NonVoiceFlag", "voice": labeling.VOICE, "non_voice": labeling.NON_VOICE,
             "source": "reference routers/flag.py::run_flag — confirmed, not assumed",
@@ -150,6 +160,22 @@ def save_decisions(job_id: str, decisions: ReadinessDecisions):
     payload = decisions.model_dump()
     if decisions.target_mode == "existing" and not decisions.target_column:
         raise HTTPException(status_code=422, detail="Select the label column to use.")
+    if (
+        decisions.target_mode == "existing"
+        and decisions.target_column
+        and is_model_output(decisions.target_column)
+        and not decisions.acknowledge_model_output_target
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{decisions.target_column}' is a column a NoVA scoring run writes, not one a "
+                "person verified. Training on it would recycle the model's own predictions as "
+                "ground truth. Choose a verified label column, derive labels from SubTask "
+                "mappings, or explicitly acknowledge this if the column has since been "
+                "human-verified."
+            ),
+        )
     if decisions.dedup_mode == "key_columns" and not decisions.dedup_keys:
         raise HTTPException(status_code=422, detail="Select at least one deduplication key column.")
     set_decision(job_id, "readiness", payload, approver=decisions.approver)
