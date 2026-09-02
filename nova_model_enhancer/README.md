@@ -26,6 +26,30 @@ You need Python 3.11+ and Node.js 18+ on PATH.
 `setup.bat` deliberately never runs `activate.ps1`, so a restricted PowerShell
 execution policy cannot block it.
 
+## Try it before you have real data
+
+You need a completed NoVA run export to do anything, so if you do not have one yet,
+double-click **`make_demo_data.bat`**. It generates a synthetic PLC 984 placement into
+`demo_data\`:
+
+| File | Feed it to |
+|---|---|
+| `PLC_984_nova_export.zip` | Stage 01 — Champion Package |
+| `PLC_984_labelled.parquet` | Stage 02 — Training Data |
+| `PLC_984_inventory_sample.parquet` | Stage 07 — scoring compatibility sample |
+
+Nothing in it is real: every value is generated, and no patient-like data is involved.
+The point is that it has the same *shape* as a real export, so all seven stages can be
+exercised end to end. The synthetic champion is a genuinely trained model (F1 ≈ 0.73,
+AUC ≈ 0.81 on its own test split), so the challengers have something real to beat.
+
+The demo files are built on your machine by your own installation, which is why they
+are generated rather than shipped — the application asks you to load only packages you
+produced yourself, and that applies to its own demo too.
+
+In Stage 03 use `UpdatedDateTimeGMT` as the date column and `AccountID` as the
+deduplication key; every other decision is yours to make.
+
 ## Run
 
 Double-click **`start.bat`**. Two console windows open and your browser is pointed at
