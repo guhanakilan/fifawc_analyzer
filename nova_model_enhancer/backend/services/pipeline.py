@@ -1,0 +1,438 @@
+"""The retraining run: split, weight, train challengers, benchmark the champion.
+
+One entry point (`run_retraining`) executes the whole Stage 5 workload inside a
+background task and writes every artifact under the job directory. The champion
+is never touched: it is loaded read-only and scored through its own fitted state.
+"""
+
+from __future__ import annotations
+
+import json
+import pickle
+import time
+from pathlib import Path
+from typing import Any
+
+import joblib
+import numpy as np
+import pandas as pd
+
+from . import champion as champion_service
+from . import evaluator, snapshot as snapshot_service, trainer, weighting
+from .nova_transform import (
+    TARGET,
+    NovaConfigs,
+    apply_fitted_transforms,
+    build_modelling_frame,
+    fit_transform_by_indices,
+)
+from .splitter import describe_split, random_split_indices, temporal_split_indices
+
+
+class PipelineError(RuntimeError):
+    pass
+
+
+def _atomic_json(payload: Any, destination: Path) -> None:
+    snapshot_service.atomic_write_text(json.dumps(payload, indent=2, default=str), destination)
+
+
+def _default_features_config(frame: pd.DataFrame, base: dict, date_column: str | None) -> dict:
+    """Fill in a transform config when the champion package did not carry one.
+
+    Only used when `features_config.json` is absent — every column gets the
+    reference's own default treatment for its dtype, and the choice is recorded
+    in the run manifest so it is visible rather than implicit.
+    """
+    cfg = {k: list(v) for k, v in base.items() if isinstance(v, list)}
+    cfg.setdefault("outlier_capping", [])
+    cfg.setdefault("log_transform", [])
+    cfg.setdefault("imputation", [])
+    cfg.setdefault("encoding", [])
+    cfg.setdefault("scaling", [])
+    configured = {e.get("col") for group in cfg.values() for e in group if isinstance(e, dict)}
+
+    for column in frame.columns:
+        if column in (TARGET, date_column) or column in configured:
+            continue
+        if pd.api.types.is_numeric_dtype(frame[column]):
+            cfg["imputation"].append({"col": column, "strategy": "Median", "enabled": True})
+        else:
+            cfg["encoding"].append({"col": column, "method": "Label", "enabled": True})
+    return cfg
+
+
+def prepare_matrices(
+    df: pd.DataFrame, configs: NovaConfigs, date_column: str,
+    split_config: dict, weight_strategy: dict,
+) -> dict:
+    """Build the modelling frame, split it, and compute approved sample weights."""
+    frame = build_modelling_frame(df, configs)
+    if TARGET not in frame.columns:
+        raise PipelineError("The modelling frame lost its NonVoiceFlag target column.")
+
+    date_series = None
+    if date_column in frame.columns:
+        date_series = pd.to_datetime(frame[date_column], errors="coerce").reset_index(drop=True)
+        frame = frame.drop(columns=[date_column])
+    elif date_column in df.columns:
+        date_series = pd.to_datetime(df[date_column], errors="coerce").reset_index(drop=True)
+
+    frame = frame.reset_index(drop=True)
+    if date_series is not None and len(date_series) != len(frame):
+        raise PipelineError(
+            f"Date column length ({len(date_series)}) does not match the modelling frame "
+            f"({len(frame)}). The snapshot and its date column are out of step."
+        )
+
+    features_config = configs.features_config or {}
+    used_default_config = not features_config
+    if used_default_config:
+        features_config = _default_features_config(frame, {}, date_column)
+
+    y_full = frame[TARGET].fillna(0).astype(int)
+    mode = split_config.get("mode", "temporal")
+    train_pct = float(split_config.get("train_pct", 70)) / 100.0
+    val_pct = float(split_config.get("val_pct", 15)) / 100.0
+    test_pct = float(split_config.get("test_pct", 15)) / 100.0
+    total_pct = train_pct + val_pct + test_pct
+    if abs(total_pct - 1.0) > 0.01:
+        raise PipelineError(
+            f"Split percentages must total 100 (received {round(total_pct * 100)})."
+        )
+    seed = int(split_config.get("seed", 42))
+
+    if mode == "temporal":
+        if date_series is None:
+            raise PipelineError(
+                f"Temporal split requires the approved date column '{date_column}', "
+                "which is not present in the snapshot."
+            )
+        train_idx, val_idx, test_idx = temporal_split_indices(date_series, y_full, test_size=test_pct)
+    else:
+        train_idx, val_idx, test_idx = random_split_indices(
+            y_full, test_size=test_pct, seed=seed, stratify=bool(split_config.get("stratify", True))
+        )
+
+    weights_full, weight_summary = weighting.compute_weights(
+        df.reset_index(drop=True), weight_strategy, dates=date_series, y=y_full
+    )
+
+    X_train, X_val, X_test, y_train, y_val, y_test, feature_names, fitted = fit_transform_by_indices(
+        frame, features_config, train_idx, test_idx, val_idx
+    )
+
+    return {
+        "frame": frame,
+        "features_config": features_config,
+        "used_default_features_config": used_default_config,
+        "dates": date_series,
+        "indices": {"train": train_idx, "val": val_idx, "test": test_idx},
+        "split_description": {
+            "mode": mode, "seed": seed,
+            "train_pct": round(train_pct * 100), "val_pct": round(val_pct * 100),
+            "test_pct": round(test_pct * 100),
+            **describe_split(date_series, train_idx, val_idx, test_idx),
+        },
+        "matrices": {
+            "X_train": X_train, "X_val": X_val, "X_test": X_test,
+            "y_train": y_train, "y_val": y_val, "y_test": y_test,
+        },
+        "feature_names": feature_names,
+        "fitted": fitted,
+        "weights": {
+            "train": weights_full[train_idx],
+            "val": weights_full[val_idx] if len(val_idx) else None,
+            "test": weights_full[test_idx],
+            "summary": weight_summary,
+        },
+    }
+
+
+def benchmark_champion(
+    extract_dir: Path, df: pd.DataFrame, indices: dict, date_column: str,
+) -> dict:
+    """Score the champion on the same rows the challengers are judged on.
+
+    Uses the champion's own fitted transforms and its own threshold, so the
+    number reported is what that model would actually have produced.
+    """
+    champ = champion_service.load_champion(extract_dir, date_column=date_column)
+    configs = champ.configs
+    configs.date_column = date_column
+    frame = build_modelling_frame(df, configs)
+    frame = frame.drop(columns=[c for c in (TARGET, date_column) if c in frame.columns])
+    X_all = apply_fitted_transforms(frame, champ.fitted)
+
+    y_all = pd.to_numeric(df[TARGET], errors="coerce").fillna(0).astype(int).reset_index(drop=True)
+    proba_all = champion_service.predict_proba(champ.estimator, X_all)
+
+    test_idx = indices["test"]
+    val_idx = indices["val"]
+    latency = evaluator.measure_latency(
+        lambda X: champion_service.predict_proba(champ.estimator, X), X_all.iloc[test_idx]
+    )
+
+    return {
+        "model_id": champ.model_id,
+        "model_family": (configs.training_results.get("results") or {})
+                        .get(champ.model_id, {}).get("model_type"),
+        "threshold": champ.threshold,
+        "feature_count": len(champ.feature_names),
+        "proba_all": proba_all,
+        "proba_test": proba_all[test_idx],
+        "proba_val": proba_all[val_idx] if len(val_idx) else None,
+        "y_all": y_all.values,
+        "y_test": y_all.values[test_idx],
+        "y_val": y_all.values[val_idx] if len(val_idx) else None,
+        "latency": latency,
+        "source_metrics": (configs.training_results.get("results") or {})
+                          .get(champ.model_id, {}).get("test_metrics", {}),
+    }
+
+
+def choose_threshold(
+    y_val, proba_val, y_test, proba_test, champion_threshold: float, criterion: str,
+) -> dict:
+    """Compare the champion threshold, 0.5, and the validation-optimised value.
+
+    The sweep runs on validation rows only. Every candidate is then reported on
+    the test rows, which the sweep never saw.
+    """
+    candidates: dict[str, float] = {
+        "champion_threshold": float(champion_threshold),
+        "neutral_0.5": 0.5,
+    }
+    sweep = None
+    if proba_val is not None and y_val is not None and len(np.unique(y_val)) > 1:
+        sweep = evaluator.threshold_sweep(y_val, proba_val)
+        best = sweep["best"].get(criterion) or sweep["best"]["f1"]
+        candidates["validation_optimised"] = float(best["threshold"])
+    else:
+        candidates["validation_optimised"] = float(champion_threshold)
+
+    comparison = []
+    for name, value in candidates.items():
+        metrics = evaluator.metrics_at_threshold(y_test, proba_test, value)
+        comparison.append({"candidate": name, "threshold": value, "test_metrics": metrics})
+
+    selected = max(comparison, key=lambda row: row["test_metrics"].get(criterion) or 0)
+    return {
+        "criterion": criterion,
+        "validation_sweep": sweep,
+        "candidates": comparison,
+        "selected_threshold": selected["threshold"],
+        "selected_candidate": selected["candidate"],
+        "selection_note": (
+            "Threshold candidates are generated on the validation slice; the value "
+            "reported here is each candidate's performance on the held-out test slice."
+        ),
+    }
+
+
+def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
+    """Full Stage 5 workload. `context` is a tasks.TaskContext."""
+    run_dir = Path(paths["run_dir"])
+    extract_dir = Path(paths["extract_dir"])
+    snapshot_dir = Path(paths["snapshot_dir"])
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    context.progress(0.02, "Loading immutable dataset snapshot")
+    df = snapshot_service.load_snapshot(snapshot_dir, settings["snapshot_id"])
+    manifest = snapshot_service.load_manifest(snapshot_dir, settings["snapshot_id"])
+    date_column = manifest["date_column"]
+
+    configs = champion_service.load_configs(extract_dir, date_column=date_column)
+
+    context.progress(0.06, "Building modelling frame, split and sample weights")
+    prepared = prepare_matrices(
+        df, configs, date_column, settings["split"], settings["weight_strategy"]
+    )
+    matrices = prepared["matrices"]
+    indices = prepared["indices"]
+
+    if matrices["X_train"].empty or matrices["X_train"].shape[1] == 0:
+        raise PipelineError(
+            "The modelling frame produced no usable features. Check the champion's "
+            "feature_selection.json against the uploaded data's columns."
+        )
+
+    context.progress(0.10, "Scoring the uploaded champion on the same benchmark rows")
+    champion_bench = benchmark_champion(extract_dir, df, indices, date_column)
+
+    available = trainer.available_model_types()
+    plan = settings.get("candidates") or trainer.build_candidate_plan(
+        champion_family=champion_bench.get("model_family"),
+        champion_params=settings.get("champion_params"),
+        available=available,
+        second_family=settings.get("second_family"),
+        include_baseline=settings.get("include_baseline", True),
+        n_trials=settings.get("n_trials"),
+    )
+    if not plan:
+        raise PipelineError(
+            "No candidate models can be trained: none of the supported families are "
+            "installed in this environment."
+        )
+
+    context.log(f"Candidate plan: {', '.join(c['candidate_id'] for c in plan)}")
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    # The fitted preprocessing state is refit for the challengers and shared by
+    # all of them: they are trained on identical matrices, so the comparison
+    # between challengers isolates the estimator.
+    fitted_path = models_dir / "fitted_transforms.pkl"
+    with fitted_path.open("wb") as handle:
+        pickle.dump(prepared["fitted"], handle)
+
+    challengers: dict[str, dict] = {}
+    span = 0.72 / max(len(plan), 1)
+    for index, candidate in enumerate(plan):
+        if context.cancelled():
+            raise trainer.TrainingCancelled("Cancelled before training the next candidate")
+        base = 0.14 + index * span
+        model_type = candidate["model_type"]
+        if not available.get(model_type):
+            context.log(f"Skipping {candidate['candidate_id']}: {model_type} is not installed")
+            challengers[candidate["candidate_id"]] = {
+                "candidate_id": candidate["candidate_id"], "model_type": model_type,
+                "skipped": f"{model_type} is not installed in this environment",
+            }
+            continue
+
+        def _progress(fraction: float, message: str, base=base) -> None:
+            context.progress(base + span * fraction, message)
+
+        context.progress(base, f"Training {candidate.get('label', candidate['candidate_id'])}")
+        try:
+            result = trainer.train_candidate(
+                model_type=model_type,
+                mode=candidate.get("mode", "tuned"),
+                X_train=matrices["X_train"], y_train=matrices["y_train"],
+                w_train=prepared["weights"]["train"],
+                X_val=matrices["X_val"], y_val=matrices["y_val"],
+                X_test=matrices["X_test"], y_test=matrices["y_test"],
+                feature_names=prepared["feature_names"],
+                fixed_params=candidate.get("fixed_params"),
+                search_spaces=candidate.get("search_spaces"),
+                n_trials=int(candidate.get("n_trials", settings.get("n_trials", 30))),
+                timeout_seconds=settings.get("timeout_seconds"),
+                n_jobs=int(settings.get("n_jobs", -1)),
+                seed=int(settings.get("seed", 42)),
+                progress=_progress,
+                should_cancel=context.cancelled,
+            )
+        except trainer.TrainingCancelled:
+            raise
+        except trainer.ModelUnavailable as exc:
+            challengers[candidate["candidate_id"]] = {
+                "candidate_id": candidate["candidate_id"], "model_type": model_type,
+                "skipped": str(exc),
+            }
+            continue
+
+        estimator = result.pop("_estimator")
+        result.pop("_raw_estimator", None)
+        proba_val = result.pop("_proba_val")
+        proba_test = result.pop("_proba_test")
+
+        model_path = models_dir / f"{candidate['candidate_id']}.pkl"
+        joblib.dump(estimator, model_path)
+
+        threshold_analysis = choose_threshold(
+            matrices["y_val"], proba_val, matrices["y_test"], proba_test,
+            champion_bench["threshold"], settings.get("threshold_criterion", "f1"),
+        )
+        selected_threshold = threshold_analysis["selected_threshold"]
+
+        latency = evaluator.measure_latency(
+            lambda X, est=estimator: trainer._predict_proba(est, X), matrices["X_test"]
+        )
+        test_metrics = evaluator.metrics_at_threshold(
+            matrices["y_test"], proba_test, selected_threshold
+        )
+
+        result.update({
+            "candidate_id": candidate["candidate_id"],
+            "label": candidate.get("label", candidate["candidate_id"]),
+            "model_path": str(model_path.relative_to(run_dir)),
+            "threshold_analysis": threshold_analysis,
+            "selected_threshold": selected_threshold,
+            "test_metrics": test_metrics,
+            "calibration_curve": evaluator.calibration_curve_points(matrices["y_test"], proba_test),
+            "latency": latency,
+        })
+        np.save(run_dir / f"proba_test_{candidate['candidate_id']}.npy", proba_test)
+        challengers[candidate["candidate_id"]] = result
+        context.log(
+            f"{candidate['candidate_id']}: test F1 {test_metrics['f1']} at threshold "
+            f"{selected_threshold} ({threshold_analysis['selected_candidate']})"
+        )
+
+    trained = {k: v for k, v in challengers.items() if "skipped" not in v}
+    if not trained:
+        raise PipelineError("No candidate finished training — see the task log for the reason.")
+
+    # ── Rolling backtest for stability ──────────────────────────────────────
+    backtest: dict = {}
+    if settings.get("run_backtest", True) and prepared["dates"] is not None:
+        context.progress(0.90, "Running rolling-origin backtest")
+        windows = int(settings.get("backtest_windows") or trainer.auto_backtest_windows(prepared["dates"]))
+        for model_type in sorted({v["model_type"] for v in trained.values()}):
+            try:
+                backtest[model_type] = trainer.rolling_backtest(
+                    prepared["frame"], prepared["features_config"], prepared["dates"],
+                    model_type, n_windows=windows, seed=int(settings.get("seed", 42)),
+                    should_cancel=context.cancelled,
+                )
+            except trainer.TrainingCancelled:
+                raise
+            except Exception as exc:  # diagnostic only — never fails the run
+                context.log(f"Backtest for {model_type} skipped: {exc}")
+                backtest[model_type] = {"model_type": model_type, "error": str(exc), "completed": False}
+
+    context.progress(0.96, "Writing run artifacts")
+    np.save(run_dir / "proba_test_champion.npy", champion_bench["proba_test"])
+    np.save(run_dir / "y_test.npy", np.asarray(matrices["y_test"]))
+    np.save(run_dir / "test_indices.npy", np.asarray(indices["test"]))
+
+    champion_test_metrics = evaluator.metrics_at_threshold(
+        champion_bench["y_test"], champion_bench["proba_test"], champion_bench["threshold"]
+    )
+
+    run_record = {
+        "run_id": settings["run_id"],
+        "snapshot_id": settings["snapshot_id"],
+        "snapshot_sha256": manifest["snapshot_sha256"],
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "settings": {
+            k: v for k, v in settings.items() if k not in ("champion_params",)
+        },
+        "split": prepared["split_description"],
+        "weights": prepared["weights"]["summary"],
+        "weight_formula": weighting.formula_text(settings["weight_strategy"]),
+        "used_default_features_config": prepared["used_default_features_config"],
+        "feature_count": len(prepared["feature_names"]),
+        "feature_names": prepared["feature_names"],
+        "champion": {
+            "model_id": champion_bench["model_id"],
+            "model_family": champion_bench["model_family"],
+            "threshold": champion_bench["threshold"],
+            "feature_count": champion_bench["feature_count"],
+            "benchmark_metrics": champion_test_metrics,
+            "source_metrics_from_package": champion_bench["source_metrics"],
+            "latency": champion_bench["latency"],
+        },
+        "challengers": challengers,
+        "backtest": backtest,
+        "available_model_types": available,
+    }
+    _atomic_json(run_record, run_dir / "run_results.json")
+    context.progress(1.0, "Retraining complete")
+    return {
+        "run_id": settings["run_id"],
+        "run_dir": str(run_dir),
+        "candidates_trained": sorted(trained),
+        "candidates_skipped": sorted(k for k, v in challengers.items() if "skipped" in v),
+    }
