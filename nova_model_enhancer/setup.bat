@@ -9,6 +9,7 @@ echo.
 
 echo [1/4] Checking Python...
 python --version || goto :python_error
+python -c "import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)" || goto :python_version_error
 
 echo [2/4] Creating the virtual environment...
 if not exist ".venv\Scripts\python.exe" python -m venv .venv || goto :venv_error
@@ -32,7 +33,17 @@ exit /b 0
 :python_error
 echo.
 echo Python was not found on PATH.
-echo Install Python 3.11 or newer with "Add python.exe to PATH" ticked, then rerun setup.bat.
+echo Install Python 3.10 or newer with "Add python.exe to PATH" ticked, then rerun setup.bat.
+pause
+exit /b 1
+
+:python_version_error
+echo.
+echo This Python is too old. Version 3.10 or newer is required; yours is:
+python --version
+echo.
+echo Install a newer Python from https://www.python.org/downloads/ with
+echo "Add python.exe to PATH" ticked, then rerun setup.bat.
 pause
 exit /b 1
 

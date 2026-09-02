@@ -17,7 +17,11 @@ original data and every previously exported version are immutable.
 
 ## Install on Windows
 
-You need Python 3.11+ and Node.js 18+ on PATH.
+You need Python 3.10+ and Node.js 18+ on PATH.
+
+Tested on Python 3.10 and 3.11, and on Node 18 through 24. `setup.bat` checks the
+Python version up front and tells you plainly if it is too old, rather than letting
+pip fail halfway through with a resolver error.
 
 1. Unzip this folder somewhere you can write to, e.g. `C:\nova\nova_model_enhancer`.
 2. Double-click **`setup.bat`**. It creates `.venv`, installs the Python packages with
