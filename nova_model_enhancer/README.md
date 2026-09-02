@@ -54,6 +54,22 @@ produced yourself, and that applies to its own demo too.
 In Stage 03 use `UpdatedDateTimeGMT` as the date column and `AccountID` as the
 deduplication key; every other decision is yours to make.
 
+## Checking a package before you upload it
+
+`tools\inspect_package.py` runs the same validator Stage 01 uses and prints its
+verdict, without starting the application:
+
+```bat
+python tools\inspect_package.py "C:\path\to\PLC984_..._export.zip"
+```
+
+It uses only the standard library, so it works on a bare Python before `setup.bat`
+has built the virtual environment. It reads the archive, never unpickles anything,
+and writes nothing outside a temporary directory it deletes on exit.
+
+Useful when an upload is refused and you want the reason in full, or when checking
+whether an export from a different nova-ml version still fits the contract.
+
 ## Run
 
 Double-click **`run.bat`**. Two console windows open and your browser is pointed at

@@ -162,3 +162,91 @@ def test_not_a_zip(tmp_path):
     path.write_bytes(b"this is not a zip file")
     with pytest.raises(PackageValidationError, match="not a readable ZIP"):
         validate_and_extract(path, tmp_path / "out")
+
+
+# ── Offline inspector ────────────────────────────────────────────────────────
+
+def _run_inspector(zip_path):
+    """Invoke tools/inspect_package.py the way a user would, in a subprocess."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    script = Path(__file__).resolve().parents[2] / "tools" / "inspect_package.py"
+    return subprocess.run(
+        [sys.executable, str(script), str(zip_path)],
+        capture_output=True, text=True, timeout=120,
+    )
+
+
+def test_inspector_accepts_a_valid_package(tmp_path):
+    result = _run_inspector(_write(tmp_path / "ok.zip", _minimal_members()))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "ACCEPTED: True" in result.stdout
+    assert "JOB_x_lgb" in result.stdout
+
+
+def test_inspector_explains_a_hard_rejection_without_stack_trace(tmp_path):
+    members = _minimal_members()
+    members["reports/curve.png"] = b"\x89PNG"
+    result = _run_inspector(_write(tmp_path / "png.zip", members))
+    assert result.returncode == 1
+    assert "REJECTED OUTRIGHT" in result.stdout
+    assert "Unsupported file type" in result.stdout
+    # It must name the offending extension and the allow-list, so the user can act.
+    assert ".png" in result.stdout
+    assert "Currently allowed" in result.stdout
+    assert "Traceback" not in result.stdout + result.stderr
+
+
+def test_inspector_names_a_missing_blocking_artifact(tmp_path):
+    members = _minimal_members()
+    del members["model/fitted_transforms.pkl"]
+    result = _run_inspector(_write(tmp_path / "missing.zip", members))
+    assert result.returncode == 1
+    assert "[MISSING] fitted_transforms.pkl" in result.stdout
+    assert "ACCEPTED: False" in result.stdout
+
+
+def test_inspector_path_imports_only_the_standard_library():
+    """It must work on a bare interpreter, before setup.bat has built the venv.
+
+    Asserted structurally rather than by sandboxing an interpreter: every module
+    the inspector pulls in is parsed, and any third-party top-level import fails
+    the test.
+    """
+    import ast
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    modules = [
+        root / "tools" / "inspect_package.py",
+        root / "backend" / "services" / "package_validator.py",
+        root / "backend" / "services" / "safety.py",
+        root / "backend" / "config.py",
+    ]
+
+    stdlib = set(sys.stdlib_module_names)
+    offenders = []
+    for module in modules:
+        tree = ast.parse(module.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                # level > 0 is a relative import inside this application.
+                if node.level:
+                    continue
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                top = name.split(".")[0]
+                if top and top not in stdlib and top != "nova_model_enhancer":
+                    offenders.append(f"{module.name}: {name}")
+
+    assert not offenders, (
+        "the intake path must not need the third-party stack, but imports: "
+        + ", ".join(offenders)
+    )
