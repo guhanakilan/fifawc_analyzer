@@ -25,7 +25,7 @@ call npm.cmd install || (popd & goto :npm_error)
 popd
 
 echo.
-echo Setup complete. Double-click start.bat to launch the application.
+echo Setup complete. Double-click run.bat, or type .\run.bat, to launch the application.
 echo Nothing outside this folder was modified.
 pause
 exit /b 0

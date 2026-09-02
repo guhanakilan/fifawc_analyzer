@@ -26,7 +26,7 @@ zero page errors, including a mid-flow refresh that restored the active job.
 | # | Criterion | Status |
 |---|---|---|
 | 1 | `setup.bat` works without PowerShell activation | Done — uses `.venv\Scripts\python.exe` and `npm.cmd` only |
-| 2 | `start.bat` launches both halves | Done — verified with the same command line the script issues |
+| 2 | `run.bat` launches both halves | Done — verified with the same command line the script issues |
 | 3 | Health status is real | Done — `/health` probes the workspace and reads the schema version; the UI polls it every 10 s |
 | 4 | All seven stages perform real actions | Done |
 | 5 | Refresh does not lose the active job | Done — job id in the URL and local storage, task state in SQLite |

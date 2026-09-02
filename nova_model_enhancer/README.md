@@ -56,8 +56,17 @@ deduplication key; every other decision is yours to make.
 
 ## Run
 
-Double-click **`start.bat`**. Two console windows open and your browser is pointed at
+Double-click **`run.bat`**. Two console windows open and your browser is pointed at
 the UI.
+
+From a Command Prompt, prefix it with `.\`:
+
+```bat
+.\run.bat
+```
+
+`.\` tells cmd to run the file in this folder rather than searching its built-in
+commands and PATH. It is worth using for all three scripts.
 
 | | |
 |---|---|
@@ -140,7 +149,7 @@ Stage 07 always validates the package through the scoring runtime it ships. It c
 
 ```bat
 set NOVA_ENHANCER_REFERENCE_SCORING=C:\path\to\nova-ml\scoring_client\scoring.py
-start.bat
+run.bat
 ```
 
 Expect that check to report a warning: the reference client cannot read a real
@@ -165,7 +174,7 @@ To relocate the workspace, set `NOVA_ENHANCER_WORKSPACE` before starting the bac
 
 ```bat
 set NOVA_ENHANCER_WORKSPACE=D:\nova-workspace
-start.bat
+run.bat
 ```
 
 ## Tests
@@ -195,10 +204,10 @@ hardcoded, so if it says unreachable, it is.
 "Add python.exe to PATH" ticked, or edit `setup.bat` to use the full interpreter path.
 
 **PowerShell blocks a script.** Nothing here needs PowerShell. Use `setup.bat` and
-`start.bat` from Explorer or `cmd.exe`.
+`run.bat` from Explorer or `cmd.exe`.
 
 **Port already in use.** Another copy is running, or something else holds 8081/5174.
-Close the old console windows, or change the ports in `start.bat` and
+Close the old console windows, or change the ports in `run.bat` and
 `frontend\vite.config.js` together.
 
 **A training task shows "interrupted".** The backend restarted while it was running.

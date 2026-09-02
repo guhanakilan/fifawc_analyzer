@@ -14,7 +14,7 @@ echo.
 .venv\Scripts\python.exe tools\make_demo_data.py || goto :failed
 
 echo.
-echo Done. Start the application with start.bat, then feed it these three files.
+echo Done. Start the application with run.bat, then feed it these three files.
 pause
 exit /b 0
 
