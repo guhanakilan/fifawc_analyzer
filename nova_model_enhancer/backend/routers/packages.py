@@ -12,6 +12,7 @@ from ..config import MAX_ZIP_BYTES, job_dir
 from ..database import (
     create_job,
     get_decision,
+    set_decision,
     get_job,
     get_training_assets,
     list_exports,
@@ -164,6 +165,13 @@ def compatibility_check(job_id: str, request: CompatibilityRequest):
         "feature_selection_count": len(champion.configs.feature_selection),
         "has_features_config": bool(champion.configs.features_config),
     }
+    # The model's real input vector, captured here — inside the one step allowed
+    # to unpickle — so the column lineage report never has to load the model.
+    set_decision(
+        job_id, "champion_feature_names",
+        {"feature_names": list(champion.feature_names), "model_id": champion.model_id},
+        request.actor or "local-user",
+    )
     update_job(job_id, status="CHAMPION_VERIFIED")
     record_audit(
         job_id, request.actor or "local-user", "package.compatibility.passed",

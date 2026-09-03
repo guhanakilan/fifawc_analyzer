@@ -162,10 +162,11 @@ export default function ReadinessStage({ job, mark, go }) {
               color: unmapped.length ? "#F59E0B" : C.green,
             },
             {
-              label: "Missing cols", value: num(review.schema_drift.missing_column_count),
-              color: review.schema_drift.missing_column_count ? "#F59E0B" : C.green,
-              sub: review.schema_drift.missing_column_count
-                ? review.schema_drift.missing_columns.slice(0, 3).join(", ") : undefined,
+              label: "Missing required",
+              value: num(review.column_lineage?.missing_required_count ?? 0),
+              color: review.column_lineage?.missing_required_count ? "#F59E0B" : C.green,
+              sub: review.column_lineage?.missing_required_count
+                ? review.column_lineage.missing_required.slice(0, 3).join(", ") : undefined,
             },
           ]}
         />
@@ -174,6 +175,8 @@ export default function ReadinessStage({ job, mark, go }) {
           Read from <code>routers/flag.py::run_flag</code> in the NoVA source, not assumed.
         </Notice>
       </Card>
+
+      {review.column_lineage && <ColumnLineage lineage={review.column_lineage} />}
 
       <Card borderSize={2}>
         <SectionTitle sub="Each of these changes what gets trained, so each needs a person behind it.">
@@ -461,3 +464,124 @@ const Dt = ({ children }) => (
   <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>{children}</dt>
 );
 const Dd = ({ children }) => <dd style={{ margin: 0, overflowWrap: "anywhere" }}>{children}</dd>;
+
+/* ── Column lineage ────────────────────────────────────────────────────────
+ *
+ * A champion package records its columns four times over, each list meaning
+ * something different. Showing one of them answers one question; showing the
+ * chain answers the one people actually ask — where did this column go?
+ */
+
+const STAGE_META = {
+  selected: { tone: "ok", label: "Model feature" },
+  derived: { tone: "info", label: "Derived" },
+  feeds_derived: { tone: "info", label: "Feeds derived" },
+  dropped_during_build: { tone: "warn", label: "Dropped during build" },
+  dropped_at_matching: { tone: "muted", label: "Dropped at matching" },
+  excluded_at_mapping: { tone: "muted", label: "Excluded at mapping" },
+  unknown: { tone: "muted", label: "Unclassified" },
+};
+
+function ColumnLineage({ lineage }) {
+  const [showAll, setShowAll] = React.useState(false);
+  const layers = lineage.layers || {};
+  const rows = showAll
+    ? lineage.columns
+    : lineage.columns.filter((c) => c.required || c.stage === "dropped_during_build");
+
+  return (
+    <Card>
+      <SectionTitle
+        sub="Every column traced through the four lists the champion package carries, so you can see exactly where each one left the pipeline."
+        right={
+          <Btn variant="ghost" small onClick={() => setShowAll((v) => !v)}>
+            <MIcon name={showAll ? "filter_list" : "list"} size={14} />{" "}
+            {showAll ? "Only what matters" : `Show all ${lineage.columns.length}`}
+          </Btn>
+        }
+      >
+        Column lineage
+      </SectionTitle>
+
+      <MetricGrid
+        compact
+        min={130}
+        items={[
+          { label: "Mapped", value: num(layers.mapped) },
+          { label: "Matched", value: num(layers.matched) },
+          { label: "Selected", value: num(layers.selected) },
+          { label: "Derived", value: num(layers.derived) },
+          {
+            label: "Fitted",
+            value: layers.fitted_available ? num(layers.fitted) : "—",
+            sub: layers.fitted_available ? undefined : "needs model load",
+          },
+        ]}
+      />
+
+      {!layers.fitted_available && (
+        <Notice tone="info" title="The fitted layer is not loaded">
+          The model's real input vector lives inside the pickle, which is only read in the
+          trust-gated compatibility step. Run that in Stage 1 to add the fourth layer here.
+        </Notice>
+      )}
+
+      {lineage.missing_required_count > 0 && (
+        <Notice tone="bad" title={`${lineage.missing_required_count} required column(s) are not in your data`}>
+          {lineage.missing_required.join(", ")} — training cannot reproduce the champion's
+          features without these.
+        </Notice>
+      )}
+
+      {lineage.removed_during_build_count > 0 && (
+        <Notice tone="warn" title={`${lineage.removed_during_build_count} column(s) were dropped when the champion was built`}>
+          {lineage.removed_during_build.join(", ")}. These were available at the Stage 03 filter
+          but are absent from the final feature list. The export does not record whether they
+          were excluded during EDA or simply not selected, so this cannot say which.
+        </Notice>
+      )}
+
+      {lineage.unexpected_column_count > 0 && (
+        <Notice tone="info" title={`${lineage.unexpected_column_count} column(s) in your data are new`}>
+          {lineage.unexpected_columns.join(", ")}. The champion never saw these; they are ignored
+          unless the feature list changes.
+        </Notice>
+      )}
+
+      <Table
+        columns={[
+          { key: "column", header: "Column" },
+          {
+            key: "stage",
+            header: "Where it ends up",
+            render: (row) => {
+              const meta = STAGE_META[row.stage] || STAGE_META.unknown;
+              return <Pill tone={meta.tone}>{meta.label}</Pill>;
+            },
+          },
+          {
+            key: "present_in_upload",
+            header: "In your data",
+            render: (row) =>
+              row.derived ? (
+                <span style={{ color: "var(--nova-grey-dim)" }}>computed</span>
+              ) : (
+                <Pill tone={row.present_in_upload ? "ok" : row.required ? "bad" : "muted"}>
+                  {row.present_in_upload ? "yes" : "no"}
+                </Pill>
+              ),
+          },
+          {
+            key: "fitted_feature_count",
+            header: "Fitted features",
+            render: (row) => (layers.fitted_available ? row.fitted_feature_count : "—"),
+          },
+          { key: "note", header: "Why" },
+        ]}
+        rows={rows}
+        rowKey={(row) => row.column}
+        empty="No columns to trace."
+      />
+    </Card>
+  );
+}

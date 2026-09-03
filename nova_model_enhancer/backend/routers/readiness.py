@@ -25,6 +25,7 @@ from ..services.data_profiler import (
     DATE_CANDIDATES,
     MODEL_OUTPUT_COLUMNS,
     TARGET_CANDIDATES,
+    column_lineage,
     drift_report,
     is_model_output,
     match_column,
@@ -105,6 +106,15 @@ def review(job_id: str):
         drift_report({"column_names": columns}, expected, configs.column_map)
         if expected else {"missing_columns": [], "missing_column_count": 0}
     )
+    # Layered view: where each column left the pipeline. The fitted layer is
+    # only available once the trust-gated compatibility step has recorded it,
+    # so its absence degrades the report rather than blocking it.
+    fitted_decision = get_decision(job_id, "champion_feature_names")
+    lineage = column_lineage(
+        configs,
+        columns,
+        (fitted_decision or {}).get("value", {}).get("feature_names"),
+    )
 
     duplicate_full_rows = int(df.duplicated().sum())
     key_candidates = [
@@ -139,6 +149,7 @@ def review(job_id: str):
             "missing_columns": drift["missing_columns"],
             "missing_column_count": drift["missing_column_count"],
         },
+        "column_lineage": lineage,
         "duplicates": {
             "full_row_duplicates": duplicate_full_rows,
             "key_column_candidates": key_candidates,

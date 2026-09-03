@@ -64,6 +64,16 @@ def journey(champion_export, client_module):
     review = client.get(f"/api/readiness/{job_id}/review").json()
     assert review["requires_subtask_decision"] is False
 
+    # The lineage report must reach the API, and a clean upload must not be
+    # accused of missing a column it was never supposed to carry.
+    lineage = review["column_lineage"]
+    assert lineage["missing_required"] == [], lineage["missing_required"]
+    assert lineage["layers"]["selected"] > 0
+    assert all(
+        not (c["derived"] and not c["present_in_upload"] and c["required"])
+        for c in lineage["columns"]
+    ), "a derived column was reported as a required upload"
+
     decisions = {
         "date_column": "UpdatedDateTimeGMT",
         "target_mode": "derive_from_subtask",
