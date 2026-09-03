@@ -154,7 +154,7 @@ function AssetBlock({ asset, onRemove }) {
         <Badge small>{asset.role}</Badge>
         <Badge small color={C.indigo} bg="#EEF1FF">{asset.file_type}</Badge>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 11, color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace" }}>
+        <span style={{ fontSize: 11, color: "var(--nova-grey-dim)", fontFamily: "var(--nova-font-mono)" }}>
           sha256 {shortHash(asset.sha256)}
         </span>
         <Btn variant="danger" small onClick={() => onRemove(asset.asset_id)}>

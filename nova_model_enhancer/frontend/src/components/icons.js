@@ -71,6 +71,11 @@ export const ICONS = {
   hourglass_top: { d: "M7 3h10M7 21h10M7 3v3.5c0 2.2 2.2 3.5 5 5.5 2.8-2 5-3.3 5-5.5V3M7 21v-3.5c0-2.2 2.2-3.5 5-5.5 2.8 2 5 3.3 5 5.5V21" },
   arrow_forward: { d: "M4 12h15M13 6l6 6-6 6" },
   inbox: { d: "M3 13.5 5.5 5h13L21 13.5V19a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5.5ZM3 13.5h5a4 4 0 0 0 8 0h5" },
+  home: { d: "M4 10.5 12 4l8 6.5V19a1 1 0 0 1-1 1h-4v-6H9v6H5a1 1 0 0 1-1-1v-8.5Z" },
+  expand_more: { d: "M6 9.5 12 15.5 18 9.5" },
+  expand_less: { d: "M6 14.5 12 8.5 18 14.5" },
+  list: { d: "M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" },
+  filter_list: { d: "M4 6h16M7 12h10M10 18h4" },
 };
 
 export const FALLBACK_ICON = ICONS.help;

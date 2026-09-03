@@ -4,6 +4,14 @@
    Component geometry lives in src/nova/Components.jsx, matching how the
    reference application styles its own components. */
 
+/* The two type stacks, declared once. Both families are bundled with the app
+   (public/fonts), so the fallbacks are a genuine last resort rather than the
+   usual result of a blocked CDN. Everything else references these. */
+:root {
+  --nova-font-sans: "DM Sans", system-ui, "Segoe UI", Roboto, sans-serif;
+  --nova-font-mono: "DM Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
 :root,
 [data-theme="light"] {
   --nova-sidebar-bg: #f7f8fc;
@@ -88,7 +96,7 @@ body {
   margin: 0;
   background: var(--nova-view-bg);
   color: var(--nova-text-mid);
-  font-family: "DM Sans", system-ui, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--nova-font-sans);
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -126,7 +134,7 @@ textarea { min-height: 62px; resize: vertical; }
 input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
 
 code {
-  font-family: "DM Mono", ui-monospace, Consolas, monospace;
+  font-family: var(--nova-font-mono);
   font-size: 0.94em;
 }
 
@@ -137,7 +145,7 @@ pre.nova-log {
   padding: 11px 13px;
   max-height: 280px;
   overflow: auto;
-  font-family: "DM Mono", ui-monospace, Consolas, monospace;
+  font-family: var(--nova-font-mono);
   font-size: 10.5px;
   color: var(--nova-grey-dim);
   white-space: pre-wrap;

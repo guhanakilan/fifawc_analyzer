@@ -79,7 +79,7 @@ function JobRuns({ jobId, open }) {
           }}
         >
           <div style={{ display: "flex", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 600 }}>
+            <span style={{ fontFamily: "var(--nova-font-mono)", fontSize: 12, fontWeight: 600 }}>
               {run.run_id}
             </span>
             <span style={{ color: C.textMid, fontSize: 11 }}>{when(run.created_at)}</span>
@@ -201,7 +201,7 @@ export default function HomeScreen({ onOpenJob, onNewJob }) {
                     color: C.textMid,
                     fontSize: 11,
                     marginTop: 6,
-                    fontFamily: "'DM Mono', monospace",
+                    fontFamily: "var(--nova-font-mono)",
                   }}
                 >
                   {job.job_id} · updated {when(job.updated_at)}
@@ -238,7 +238,7 @@ function Stat({ label, value }) {
       <div style={{ fontSize: 10, letterSpacing: 0.6, color: C.textMid, textTransform: "uppercase" }}>
         {label}
       </div>
-      <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 600, fontSize: 14 }}>
+      <div style={{ fontFamily: "var(--nova-font-mono)", fontWeight: 600, fontSize: 14 }}>
         {value}
       </div>
     </div>

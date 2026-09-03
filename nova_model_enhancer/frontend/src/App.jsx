@@ -310,7 +310,7 @@ function Sidebar({ active, furthest, onNav, onHome, version }) {
         display: "flex", flexDirection: "column",
         borderRight: "1px solid var(--nova-sidebar-border)",
         position: "fixed", left: 0, top: 0, bottom: 0, zIndex: 100,
-        fontFamily: "'DM Mono',monospace", transition: "var(--nova-transition)",
+        fontFamily: "var(--nova-font-mono)", transition: "var(--nova-transition)",
       }}
     >
       <div style={{
@@ -341,7 +341,7 @@ function Sidebar({ active, furthest, onNav, onHome, version }) {
             padding: "9px 20px", border: "none", cursor: "pointer", textAlign: "left",
             background: active === "home" ? `linear-gradient(90deg, ${accent}1A 0%, transparent 85%)` : "transparent",
             color: active === "home" ? accent : "var(--nova-sidebar-text-default)",
-            fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+            fontFamily: "var(--nova-font-mono)", fontSize: 12, fontWeight: 700,
             borderLeft: `2px solid ${active === "home" ? accent : "transparent"}`,
           }}
         >
@@ -442,7 +442,7 @@ function Header({ stage, job, health, onStartOver }) {
   const chip = {
     display: "inline-flex", alignItems: "center", gap: 5,
     border: "1px solid var(--nova-header-border)", borderRadius: 6,
-    padding: "3px 9px", fontSize: 11, fontFamily: "'DM Mono',monospace",
+    padding: "3px 9px", fontSize: 11, fontFamily: "var(--nova-font-mono)",
     color: "var(--nova-header-text)", whiteSpace: "nowrap",
   };
 
@@ -461,7 +461,7 @@ function Header({ stage, job, health, onStartOver }) {
         <span style={{ color: "var(--nova-header-text-dim)" }}>›</span>
         <span style={{
           color: "var(--nova-header-text)", fontSize: 13, fontWeight: 700,
-          fontFamily: "'DM Mono',monospace", whiteSpace: "nowrap",
+          fontFamily: "var(--nova-font-mono)", whiteSpace: "nowrap",
           overflow: "hidden", textOverflow: "ellipsis",
         }}>
           {stage.label}
@@ -532,7 +532,7 @@ function StageBanner({ definition }) {
       borderRadius: 12, padding: "18px 22px",
     }}>
       <div style={{
-        fontSize: 32, fontWeight: 900, color: C.indigo, fontFamily: "'DM Mono',monospace",
+        fontSize: 32, fontWeight: 900, color: C.indigo, fontFamily: "var(--nova-font-mono)",
         letterSpacing: -1.5, paddingRight: 18, borderRight: "1px solid var(--nova-hero-border)",
       }}>
         {definition.num}
@@ -540,7 +540,7 @@ function StageBanner({ definition }) {
       <div style={{ minWidth: 0 }}>
         <div style={{
           fontSize: 9, letterSpacing: 1.4, fontWeight: 800, color: "var(--nova-hero-sub)",
-          fontFamily: "'DM Mono',monospace", textTransform: "uppercase",
+          fontFamily: "var(--nova-font-mono)", textTransform: "uppercase",
         }}>
           Model enhancement pipeline
         </div>

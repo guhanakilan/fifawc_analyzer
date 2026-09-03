@@ -362,7 +362,7 @@ function TaskCard({ task, log, onResume, resuming }) {
           {task.message || task.status}
         </span>
         <span style={{ flex: 1 }} />
-        <span style={{ fontSize: 12, fontFamily: "'DM Mono',monospace" }}>
+        <span style={{ fontSize: 12, fontFamily: "var(--nova-font-mono)" }}>
           {Math.round((task.progress || 0) * 100)}%
         </span>
       </div>

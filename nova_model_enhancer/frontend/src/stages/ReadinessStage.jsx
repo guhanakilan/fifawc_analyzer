@@ -461,7 +461,7 @@ function SnapshotCard({ snapshot, onContinue }) {
 }
 
 const Dt = ({ children }) => (
-  <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>{children}</dt>
+  <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "var(--nova-font-mono)", fontSize: 11 }}>{children}</dt>
 );
 const Dd = ({ children }) => <dd style={{ margin: 0, overflowWrap: "anywhere" }}>{children}</dd>;
 

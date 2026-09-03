@@ -5,12 +5,12 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>NoVA Model Enhancer</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=DM+Mono:wght@400;500&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Fonts are served from this application, not from the Google Fonts CDN:
+         the app is offline-first and runs inside networks that block it. See
+         public/fonts/OFL.txt for the licence. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/dm-sans-3bfe4586.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/dm-mono-d893bf46.woff2" crossorigin />
+    <link rel="stylesheet" href="/fonts/fonts.css" />
   </head>
   <body>
     <div id="root"></div>

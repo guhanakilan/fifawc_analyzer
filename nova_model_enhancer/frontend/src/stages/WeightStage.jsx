@@ -314,11 +314,11 @@ export default function WeightStage({ job, mark, go }) {
                   return (
                     <div key={`${bucket.from}-${bucket.to}`}
                       style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                      <span style={{ width: 108, fontSize: 11, fontFamily: "'DM Mono',monospace", color: "var(--nova-grey-dim)" }}>
+                      <span style={{ width: 108, fontSize: 11, fontFamily: "var(--nova-font-mono)", color: "var(--nova-grey-dim)" }}>
                         {bucket.from.toFixed(2)}–{bucket.to.toFixed(2)}
                       </span>
                       <div style={{ flex: 1 }}><ProgressBar value={bucket.rows} max={maxRows} /></div>
-                      <span style={{ width: 66, textAlign: "right", fontSize: 11, fontFamily: "'DM Mono',monospace" }}>
+                      <span style={{ width: 66, textAlign: "right", fontSize: 11, fontFamily: "var(--nova-font-mono)" }}>
                         {num(bucket.rows)}
                       </span>
                     </div>

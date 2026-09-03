@@ -408,7 +408,7 @@ export default function ComparisonStage({ job, mark, go }) {
                 >
                   <input id="promo-typed" type="text" placeholder={selected} value={typed}
                     onChange={(e) => setTyped(e.target.value)}
-                    style={{ fontFamily: "'DM Mono',monospace" }} />
+                    style={{ fontFamily: "var(--nova-font-mono)" }} />
                 </Field>
                 <Field label="Notes" htmlFor="promo-notes">
                   <input id="promo-notes" type="text" value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -456,12 +456,12 @@ function MetricTable({ championMetrics, championLabel, championThreshold, candid
   const th = {
     padding: "8px 11px", background: isDark ? "#1A1C2E" : "#F5F7FC",
     borderBottom: `1px solid ${border}`, whiteSpace: "nowrap", fontSize: 9.5,
-    letterSpacing: 0.8, textTransform: "uppercase", fontFamily: "'DM Mono',monospace",
+    letterSpacing: 0.8, textTransform: "uppercase", fontFamily: "var(--nova-font-mono)",
     fontWeight: 700, color: isDark ? "#8892A0" : C.indigo, position: "sticky", top: 0,
   };
   const td = {
     padding: "7px 11px", borderBottom: `1px solid ${border}`, whiteSpace: "nowrap",
-    textAlign: "right", fontFamily: "'DM Mono',monospace",
+    textAlign: "right", fontFamily: "var(--nova-font-mono)",
   };
 
   return (

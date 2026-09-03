@@ -106,15 +106,15 @@ export default function ChampionStage({ job, setJob, go }) {
 
           <SubHeading>Package identity</SubHeading>
           <dl style={{ display: "grid", gridTemplateColumns: "max-content 1fr", gap: "5px 16px", fontSize: 12, margin: 0 }}>
-            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>SHA-256</dt>
+            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "var(--nova-font-mono)", fontSize: 11 }}>SHA-256</dt>
             <dd style={{ margin: 0, overflowWrap: "anywhere" }}>{job.package_sha256}</dd>
-            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>Size</dt>
+            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "var(--nova-font-mono)", fontSize: 11 }}>Size</dt>
             <dd style={{ margin: 0 }}>{bytes(meta.extracted_bytes)} extracted from {meta.file_count} files</dd>
-            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>Training window</dt>
+            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "var(--nova-font-mono)", fontSize: 11 }}>Training window</dt>
             <dd style={{ margin: 0 }}>
               {meta.training_from ? `${when(meta.training_from)} → ${when(meta.training_to)}` : "not recorded"}
             </dd>
-            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "'DM Mono',monospace", fontSize: 11 }}>Split mode</dt>
+            <dt style={{ color: "var(--nova-grey-dim)", fontFamily: "var(--nova-font-mono)", fontSize: 11 }}>Split mode</dt>
             <dd style={{ margin: 0 }}>{meta.split_mode || "not recorded"}</dd>
           </dl>
 

@@ -61,9 +61,10 @@ export const NovaGlobeLogo = ({ size = 32 }) => {
       dots.push(<circle key={`${i}-${j}`} cx={x} cy={y} r={Math.max(0.5, baseDotR * scale)} fill={C.green} />);
     }
   }
+  // No background plate: a hard-coded white one showed as a bright box against
+  // the dark theme. The dots carry the mark on whatever surface it sits on.
   return (
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
-      <rect width={size} height={size} rx={8} fill="white" />
       {dots}
     </svg>
   );
@@ -108,7 +109,7 @@ export const SectionTitle = ({ children, sub, right }) => {
     <div style={{ marginBottom: 20, display: "flex", alignItems: "flex-start", gap: 12 }}>
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{
-          fontSize: 18, fontWeight: 800, fontFamily: "'DM Mono', monospace",
+          fontSize: 18, fontWeight: 800, fontFamily: "var(--nova-font-mono)",
           letterSpacing: -0.3, color: isDark ? "#E8EAF6" : C.navy,
         }}>
           {children}
@@ -130,7 +131,7 @@ export const SubHeading = ({ children }) => {
   return (
     <div style={{
       fontSize: 10, fontWeight: 800, letterSpacing: 1, textTransform: "uppercase",
-      fontFamily: "'DM Mono', monospace", color: isDark ? "#8892A0" : C.indigo,
+      fontFamily: "var(--nova-font-mono)", color: isDark ? "#8892A0" : C.indigo,
       margin: "22px 0 10px", display: "flex", alignItems: "center", gap: 10,
     }}>
       <span>{children}</span>
@@ -146,7 +147,7 @@ export const Badge = ({ children, color = C.indigo, bg = "#EEF1FF", small }) => 
     background: bg, color, borderRadius: 4,
     padding: small ? "2px 6px" : "3px 10px",
     fontSize: small ? 11 : 12, fontWeight: 700,
-    fontFamily: "'DM Mono',monospace", letterSpacing: 0.3, whiteSpace: "nowrap",
+    fontFamily: "var(--nova-font-mono)", letterSpacing: 0.3, whiteSpace: "nowrap",
   }}>
     {children}
   </span>
@@ -280,7 +281,7 @@ export const MetricCard = ({ label, value, sub, color = C.navy, compact }) => {
     >
       <div style={{
         fontSize: compact ? 19 : 28, fontWeight: 900, color: valueColor,
-        fontFamily: "'DM Mono',monospace", letterSpacing: -1, overflowWrap: "anywhere",
+        fontFamily: "var(--nova-font-mono)", letterSpacing: -1, overflowWrap: "anywhere",
         lineHeight: 1.15,
       }}>
         {value ?? "—"}
@@ -437,7 +438,7 @@ export const Table = ({ columns, rows, rowKey, highlight, empty = "Nothing to sh
                   background: isDark ? "#1A1C2E" : "#F5F7FC",
                   borderBottom: `1px solid ${border}`, whiteSpace: "nowrap",
                   fontSize: 9.5, letterSpacing: 0.8, textTransform: "uppercase",
-                  fontFamily: "'DM Mono',monospace", fontWeight: 700,
+                  fontFamily: "var(--nova-font-mono)", fontWeight: 700,
                   color: isDark ? "#8892A0" : C.indigo, position: "sticky", top: 0,
                 }}
               >
@@ -458,7 +459,7 @@ export const Table = ({ columns, rows, rowKey, highlight, empty = "Nothing to sh
                   style={{
                     padding: "7px 11px", borderBottom: `1px solid ${border}`, whiteSpace: "nowrap",
                     textAlign: column.className === "num" ? "right" : "left",
-                    fontFamily: column.className === "num" ? "'DM Mono',monospace" : "inherit",
+                    fontFamily: column.className === "num" ? "var(--nova-font-mono)" : "inherit",
                     color: column.tone?.(row)
                       ? STATUS[column.tone(row)]
                       : (isDark ? "#C9CFE4" : "#334155"),
