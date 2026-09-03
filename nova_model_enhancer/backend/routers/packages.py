@@ -16,6 +16,7 @@ from ..database import (
     get_training_assets,
     list_exports,
     list_jobs,
+    job_overview,
     record_audit,
     update_job,
 )
@@ -103,6 +104,12 @@ def upload_package(file: UploadFile = File(...)):
 @router.get("/jobs")
 def jobs():
     return {"jobs": list_jobs()}
+
+
+@router.get("/overview")
+def overview():
+    """Home-screen listing: every job with its run, dataset and export counts."""
+    return {"jobs": job_overview()}
 
 
 @router.get("/jobs/{job_id}")

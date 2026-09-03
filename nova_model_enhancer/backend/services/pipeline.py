@@ -37,6 +37,71 @@ def _atomic_json(payload: Any, destination: Path) -> None:
     snapshot_service.atomic_write_text(json.dumps(payload, indent=2, default=str), destination)
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert numpy scalars and arrays to native Python for round-trippable JSON.
+
+    Checkpoints are read back to resume a run, so `default=str` is not good
+    enough here: a numpy float written as "0.71" must not come back as a string.
+    """
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, np.floating):
+        return float(value)
+    return value
+
+
+def checkpoint_dir(run_dir: Path) -> Path:
+    return Path(run_dir) / "checkpoints"
+
+
+def write_candidate_checkpoint(run_dir: Path, candidate_id: str, result: dict) -> None:
+    """Persist one finished candidate so a restart never retrains it.
+
+    Written immediately after the candidate completes, alongside its already
+    persisted model .pkl and probability .npy, so the three stay consistent.
+    """
+    directory = checkpoint_dir(run_dir)
+    directory.mkdir(parents=True, exist_ok=True)
+    _atomic_json(_json_safe(result), directory / f"{candidate_id}.json")
+
+
+def load_candidate_checkpoints(run_dir: Path) -> dict[str, dict]:
+    """Read back candidates finished by an earlier attempt at this run.
+
+    A checkpoint counts only when the artifacts it refers to are still present;
+    a half-written run directory resumes by retraining, never by trusting a
+    checkpoint whose model file has gone.
+    """
+    directory = checkpoint_dir(run_dir)
+    if not directory.is_dir():
+        return {}
+    recovered: dict[str, dict] = {}
+    for path in sorted(directory.glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        candidate_id = payload.get("candidate_id")
+        if not candidate_id:
+            continue
+        if "skipped" not in payload:
+            model_rel = payload.get("model_path")
+            if not model_rel or not (Path(run_dir) / model_rel).exists():
+                continue
+            if not (Path(run_dir) / f"proba_test_{candidate_id}.npy").exists():
+                continue
+        recovered[candidate_id] = payload
+    return recovered
+
+
 def _default_features_config(frame: pd.DataFrame, base: dict, date_column: str | None) -> dict:
     """Fill in a transform config when the champion package did not carry one.
 
@@ -286,13 +351,31 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
     with fitted_path.open("wb") as handle:
         pickle.dump(prepared["fitted"], handle)
 
-    challengers: dict[str, dict] = {}
+    # Candidates finished by an earlier attempt at this same run_id. Resuming
+    # reuses them verbatim rather than paying for the same fit twice; a fresh
+    # run ignores them entirely.
+    resumed: dict[str, dict] = (
+        load_candidate_checkpoints(run_dir) if settings.get("resume") else {}
+    )
+    if resumed:
+        context.log(
+            f"Resuming run {settings['run_id']}: reusing "
+            f"{', '.join(sorted(resumed))} from the interrupted attempt"
+        )
+
+    challengers: dict[str, dict] = dict(resumed)
     span = 0.72 / max(len(plan), 1)
     for index, candidate in enumerate(plan):
         if context.cancelled():
             raise trainer.TrainingCancelled("Cancelled before training the next candidate")
         base = 0.14 + index * span
         model_type = candidate["model_type"]
+        if candidate["candidate_id"] in resumed:
+            context.progress(
+                base + span,
+                f"Reusing {candidate.get('label', candidate['candidate_id'])} from the interrupted run",
+            )
+            continue
         if not available.get(model_type):
             context.log(f"Skipping {candidate['candidate_id']}: {model_type} is not installed")
             challengers[candidate["candidate_id"]] = {
@@ -365,6 +448,9 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
         })
         np.save(run_dir / f"proba_test_{candidate['candidate_id']}.npy", proba_test)
         challengers[candidate["candidate_id"]] = result
+        # Checkpoint last, once the model and probabilities are both on disk, so
+        # a checkpoint always implies its artifacts exist.
+        write_candidate_checkpoint(run_dir, candidate["candidate_id"], result)
         context.log(
             f"{candidate['candidate_id']}: test F1 {test_metrics['f1']} at threshold "
             f"{selected_threshold} ({threshold_analysis['selected_candidate']})"

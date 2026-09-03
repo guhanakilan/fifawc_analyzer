@@ -11,6 +11,7 @@ import { ThemeProvider, useTheme } from "./nova/theme.jsx";
 import ChampionStage from "./stages/ChampionStage.jsx";
 import ComparisonStage from "./stages/ComparisonStage.jsx";
 import ExportStage from "./stages/ExportStage.jsx";
+import HomeScreen from "./stages/HomeScreen.jsx";
 import ReadinessStage from "./stages/ReadinessStage.jsx";
 import TrainingDataStage from "./stages/TrainingDataStage.jsx";
 import TrainingStage from "./stages/TrainingStage.jsx";
@@ -26,7 +27,26 @@ export const STAGES = [
   { id: "export", num: "07", label: "Export", icon: "deployed_code" },
 ];
 
+const HOME_DEFINITION = {
+  id: "home",
+  num: "00",
+  label: "Jobs",
+  icon: "home",
+};
+
 const STORAGE_KEY = "nova-enhancer:job";
+const HOME = "home";
+
+/** Backend stage name → the stage id this UI navigates to. */
+const STAGE_FOR_BACKEND = {
+  CHAMPION_PACKAGE: "champion",
+  TRAINING_DATA: "data",
+  READINESS: "readiness",
+  WEIGHT_STRATEGY: "weights",
+  RETRAIN_TUNE: "training",
+  COMPARISON: "comparison",
+  EXPORT: "export",
+};
 
 export default function App() {
   return (
@@ -63,7 +83,7 @@ function Workbench() {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const health = useHealth();
-  const [stage, setStage] = React.useState("champion");
+  const [stage, setStage] = React.useState(HOME);
   const [job, setJob] = React.useState(null);
   const [progress, setProgress] = React.useState({});
   const [restoring, setRestoring] = React.useState(true);
@@ -105,6 +125,7 @@ function Workbench() {
     })();
     const jobId = new URLSearchParams(window.location.search).get("job") || stored;
     if (!jobId) {
+      setStage(HOME);
       setRestoring(false);
       return () => {};
     }
@@ -137,7 +158,7 @@ function Workbench() {
 
   // ── Keep the URL and storage in step with the active job and stage ────────
   React.useEffect(() => {
-    if (!job) return;
+    if (!job || stage === HOME) return;
     try {
       localStorage.setItem(STORAGE_KEY, job.job_id);
     } catch {
@@ -149,7 +170,8 @@ function Workbench() {
     window.history.replaceState(null, "", url);
   }, [job, stage]);
 
-  const startOver = () => {
+  /** Leave the current job without destroying anything it has saved. */
+  const clearActiveJob = React.useCallback((nextStage) => {
     try {
       localStorage.removeItem(STORAGE_KEY);
     } catch {
@@ -157,12 +179,28 @@ function Workbench() {
     }
     const url = new URL(window.location.href);
     url.searchParams.delete("job");
-    url.hash = "champion";
+    url.hash = nextStage;
     window.history.replaceState(null, "", url);
     setJob(null);
     setProgress({});
-    setStage("champion");
-  };
+    setStage(nextStage);
+  }, []);
+
+  const goHome = React.useCallback(() => clearActiveJob(HOME), [clearActiveJob]);
+  const startOver = React.useCallback(() => clearActiveJob("champion"), [clearActiveJob]);
+
+  /** Reopen a saved job at the furthest stage its recorded progress allows. */
+  const openJob = React.useCallback(async (summary) => {
+    setRestoreError(null);
+    try {
+      const full = await api.job(summary.job_id);
+      setJob(full);
+      await syncProgress(full.job_id);
+      setStage(STAGE_FOR_BACKEND[full.current_stage] || "champion");
+    } catch (error) {
+      setRestoreError(error);
+    }
+  }, [syncProgress]);
 
   const packageReady = Boolean(job?.validation?.valid);
   const furthest = STAGES.reduce((reach, stageDef, index) => {
@@ -188,19 +226,24 @@ function Workbench() {
         active={stage}
         furthest={furthest}
         onNav={setStage}
+        onHome={goHome}
         version={health.body?.version}
       />
       <Header
-        stage={definition}
-        job={job}
+        stage={stage === HOME ? HOME_DEFINITION : definition}
+        job={stage === HOME ? null : job}
         health={health}
-        onStartOver={job ? startOver : null}
+        onStartOver={stage !== HOME && job ? startOver : null}
       />
 
       <main style={{ marginLeft: 240, paddingTop: 44 }}>
         <div style={{ maxWidth: 1180, margin: "0 auto", padding: "22px 26px 72px" }}>
-          <StageBanner definition={definition} />
-          <StageHelpBanner help={stageHelp[definition.id]} />
+          {stage !== HOME && (
+            <>
+              <StageBanner definition={definition} />
+              <StageHelpBanner help={stageHelp[definition.id]} />
+            </>
+          )}
 
           {health.state === "unreachable" && (
             <Notice tone="bad" title="The backend is not responding">
@@ -232,6 +275,9 @@ function Workbench() {
                 </Notice>
               ) : (
                 <>
+                  {stage === HOME && (
+                    <HomeScreen onOpenJob={openJob} onNewJob={startOver} />
+                  )}
                   {stage === "champion" && <ChampionStage {...stageProps} />}
                   {stage === "data" && <TrainingDataStage {...stageProps} />}
                   {stage === "readiness" && <ReadinessStage {...stageProps} />}
@@ -251,7 +297,7 @@ function Workbench() {
 
 // ── Sidebar ──────────────────────────────────────────────────────────────────
 
-function Sidebar({ active, furthest, onNav, version }) {
+function Sidebar({ active, furthest, onNav, onHome, version }) {
   const { theme } = useTheme();
   const isDark = theme === "dark";
   const accent = isDark ? C.green : C.indigo;
@@ -283,6 +329,28 @@ function Sidebar({ active, furthest, onNav, version }) {
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: "10px 0" }}>
+        <motion.button
+          type="button"
+          onClick={onHome}
+          aria-current={active === "home" ? "page" : undefined}
+          whileHover={active !== "home"
+            ? { background: `linear-gradient(90deg, ${accent}0A 0%, transparent 80%)`, x: 1 }
+            : {}}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", gap: 10,
+            padding: "9px 20px", border: "none", cursor: "pointer", textAlign: "left",
+            background: active === "home" ? `linear-gradient(90deg, ${accent}1A 0%, transparent 85%)` : "transparent",
+            color: active === "home" ? accent : "var(--nova-sidebar-text-default)",
+            fontFamily: "'DM Mono',monospace", fontSize: 12, fontWeight: 700,
+            borderLeft: `2px solid ${active === "home" ? accent : "transparent"}`,
+          }}
+        >
+          <MIcon name="home" size={15} />
+          All jobs
+        </motion.button>
+        <div style={{
+          margin: "8px 20px 4px", height: 1, background: "var(--nova-sidebar-border)",
+        }} />
         {STAGES.map((stageDef, index) => {
           const isActive = active === stageDef.id;
           const isCompleted = index < furthest;

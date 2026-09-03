@@ -143,6 +143,21 @@ export default function TrainingStage({ job, mark, go }) {
     }
   };
 
+  /** Continue an interrupted run: candidates already finished are reused. */
+  const resume = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const resumed = await api.resumeTask(task.task_id);
+      setTask(await api.task(resumed.task_id));
+      setLog([]);
+    } catch (resumeError) {
+      setError(resumeError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <>
       <Card>
@@ -291,7 +306,7 @@ export default function TrainingStage({ job, mark, go }) {
         <ErrorNotice error={error} title="The run could not start" />
       </Card>
 
-      {task && <TaskCard task={task} log={log} />}
+      {task && <TaskCard task={task} log={log} onResume={resume} resuming={busy} />}
 
       <Card>
         <SectionTitle
@@ -331,7 +346,7 @@ export default function TrainingStage({ job, mark, go }) {
   );
 }
 
-function TaskCard({ task, log }) {
+function TaskCard({ task, log, onResume, resuming }) {
   const tone = STATUS_TONE[task.status] || "muted";
   return (
     <Card borderSize={task.status === "complete" ? 2 : 1}>
@@ -355,7 +370,16 @@ function TaskCard({ task, log }) {
 
       {task.status === "interrupted" && (
         <Notice tone="warn" title="This task did not survive a backend restart">
-          The process running it was stopped. Nothing was corrupted — start a new run when ready.
+          <p style={{ margin: "0 0 10px" }}>
+            The process running it was stopped, so nothing is running now. Every candidate that
+            had already finished was written to disk and is still there — resuming trains only
+            what is missing rather than repeating the whole run.
+          </p>
+          {onResume && (
+            <Btn onClick={onResume} busy={resuming} busyLabel="Resuming…">
+              <MIcon name="play_arrow" size={15} /> Resume this run
+            </Btn>
+          )}
         </Notice>
       )}
       {task.status === "failed" && (

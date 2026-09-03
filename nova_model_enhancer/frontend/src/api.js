@@ -54,6 +54,7 @@ export const api = {
   health: () => request("/health"),
 
   jobs: () => request("/api/packages/jobs"),
+  overview: () => request("/api/packages/overview"),
   job: (jobId) => request(`/api/packages/jobs/${jobId}`),
   jobProgress: (jobId) => request(`/api/packages/jobs/${jobId}/progress`),
   uploadPackage: (file) => {
@@ -90,6 +91,9 @@ export const api = {
   taskLog: (taskId) => request(`/api/training/tasks/${taskId}/log`),
   cancelTask: (taskId) => request(`/api/training/tasks/${taskId}/cancel`, { method: "POST" }),
   runs: (jobId) => request(`/api/training/${jobId}/runs`),
+  resumable: (jobId) => request(`/api/training/${jobId}/resumable`),
+  resumeTask: (taskId) =>
+    request(`/api/training/tasks/${taskId}/resume`, { method: "POST" }),
 
   gate: (jobId) => request(`/api/comparison/${jobId}/gate`),
   saveGate: (jobId, payload) => request(`/api/comparison/${jobId}/gate`, json(payload)),

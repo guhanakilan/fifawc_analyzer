@@ -204,6 +204,59 @@ def list_jobs(limit: int = 100) -> list[dict]:
     return [_job_row_to_dict(r) for r in rows]
 
 
+def job_overview(limit: int = 100) -> list[dict]:
+    """Every job with the counts the home screen needs, in one pass.
+
+    Read-only aggregation over the tables that already persist the work, so the
+    home screen reflects real durable state rather than anything a browser kept.
+    """
+    with connection() as db:
+        rows = db.execute(
+            "SELECT * FROM retraining_jobs ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+        jobs = [_job_row_to_dict(r) for r in rows]
+        if not jobs:
+            return []
+        ids = [j["job_id"] for j in jobs]
+        marks = ",".join("?" * len(ids))
+
+        tasks: dict[str, dict] = {j: {"total": 0, "complete": 0, "interrupted": 0, "running": 0}
+                                  for j in ids}
+        for row in db.execute(
+            f"SELECT job_id, status, COUNT(*) AS n FROM background_jobs "
+            f"WHERE job_id IN ({marks}) AND kind = 'training' GROUP BY job_id, status", ids
+        ):
+            bucket = tasks[row["job_id"]]
+            bucket["total"] += row["n"]
+            if row["status"] == "complete":
+                bucket["complete"] += row["n"]
+            elif row["status"] == "interrupted":
+                bucket["interrupted"] += row["n"]
+            elif row["status"] in ("queued", "running"):
+                bucket["running"] += row["n"]
+
+        exports = {j: 0 for j in ids}
+        for row in db.execute(
+            f"SELECT job_id, COUNT(*) AS n FROM exports WHERE job_id IN ({marks}) GROUP BY job_id", ids
+        ):
+            exports[row["job_id"]] = row["n"]
+
+        datasets = {j: 0 for j in ids}
+        for row in db.execute(
+            f"SELECT job_id, COUNT(*) AS n FROM training_assets WHERE job_id IN ({marks}) GROUP BY job_id",
+            ids,
+        ):
+            datasets[row["job_id"]] = row["n"]
+
+    for job in jobs:
+        counts = tasks[job["job_id"]]
+        job["runs"] = counts
+        job["export_count"] = exports[job["job_id"]]
+        job["dataset_count"] = datasets[job["job_id"]]
+        job["resumable"] = counts["interrupted"] > 0
+    return jobs
+
+
 def update_job(job_id: str, *, status: str | None = None, current_stage: str | None = None) -> None:
     sets, params = ["updated_at = ?"], [utc_now()]
     if status is not None:
