@@ -134,10 +134,15 @@ def build_comparison(
         reverse=True,
     )
 
-    backtest_ok = None
+    # Three states, not two: not run, ran and completed, ran and failed. Folding
+    # "not run" into "unknown" let a skipped backtest read as a silent pass.
     backtest = run.get("backtest") or {}
-    if backtest:
-        backtest_ok = all(r.get("completed") for r in backtest.values())
+    if not backtest:
+        backtest_ok, backtest_status = None, "not_run"
+    elif all(r.get("completed") for r in backtest.values()):
+        backtest_ok, backtest_status = True, "passed"
+    else:
+        backtest_ok, backtest_status = False, "failed"
 
     data_quality_blockers: list[str] = []
     if (manifest.get("row_counts") or {}).get("final", 0) < 500:
@@ -161,6 +166,7 @@ def build_comparison(
                 "challenger": historical.get(candidate_id),
             },
             backtest_ok=backtest_ok,
+            backtest_status=backtest_status,
             package_ok=None,
             data_quality_blockers=data_quality_blockers,
         )
@@ -196,6 +202,7 @@ def build_comparison(
         "segment_breakdown": segment_breakdown,
         "backtest": backtest,
         "backtest_completed": backtest_ok,
+        "backtest_status": backtest_status,
         "data_quality_blockers": data_quality_blockers,
         "split": run.get("split"),
         "weights": run.get("weights"),

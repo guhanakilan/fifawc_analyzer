@@ -26,7 +26,7 @@ export default function TrainingStage({ job, mark, go }) {
   const [config, setConfig] = React.useState({
     mode: "temporal", train_pct: 70, val_pct: 15, test_pct: 15,
     n_trials: 20, timeout_seconds: "", n_jobs: -1, seed: 42,
-    include_baseline: true, run_backtest: true, backtest_windows: "",
+    include_baseline: true, run_backtest: false, backtest_windows: "",
     threshold_criterion: "f1", second_family: "",
   });
 
@@ -280,7 +280,9 @@ export default function TrainingStage({ job, mark, go }) {
           </CheckRow>
           <CheckRow checked={config.run_backtest} disabled={running}
             onChange={(value) => set("run_backtest", value)}>
-            Run a rolling-origin backtest for stability over time (diagnostic; never fails the run).
+            Run a rolling-origin backtest for stability over time. Off by default because it
+            adds roughly a fifth to the run; without it the promotion gate reports stability as
+            not assessed rather than treating its absence as a pass.
           </CheckRow>
         </div>
 

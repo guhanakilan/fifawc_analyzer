@@ -8,8 +8,11 @@ is never touched: it is loaded read-only and scored through its own fitted state
 from __future__ import annotations
 
 import json
+import os
 import pickle
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -364,30 +367,59 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
         )
 
     challengers: dict[str, dict] = dict(resumed)
-    span = 0.72 / max(len(plan), 1)
-    for index, candidate in enumerate(plan):
-        if context.cancelled():
-            raise trainer.TrainingCancelled("Cancelled before training the next candidate")
-        base = 0.14 + index * span
-        model_type = candidate["model_type"]
+
+    pending = [c for c in plan if c["candidate_id"] not in resumed]
+    for candidate in plan:
         if candidate["candidate_id"] in resumed:
-            context.progress(
-                base + span,
-                f"Reusing {candidate.get('label', candidate['candidate_id'])} from the interrupted run",
-            )
-            continue
+            context.log(f"Reusing {candidate['candidate_id']} from the interrupted run")
+
+    # Candidates that cannot run at all are settled before anything is scheduled.
+    runnable = []
+    for candidate in pending:
+        model_type = candidate["model_type"]
         if not available.get(model_type):
             context.log(f"Skipping {candidate['candidate_id']}: {model_type} is not installed")
             challengers[candidate["candidate_id"]] = {
                 "candidate_id": candidate["candidate_id"], "model_type": model_type,
                 "skipped": f"{model_type} is not installed in this environment",
             }
-            continue
+        else:
+            runnable.append(candidate)
 
-        def _progress(fraction: float, message: str, base=base) -> None:
-            context.progress(base + span * fraction, message)
+    # Candidates are independent fits over identical matrices, so they *can* run
+    # concurrently with the cores split between them, as the NoVA workbench does.
+    #
+    # Measured on 4 cores with 40,000 rows, that is not a win: 1 worker with 4
+    # cores took 29.7s, 4 workers with 1 core each 30.0s, and 2 workers with 2
+    # cores each 38.6s. The tree models already parallelise internally, so
+    # splitting the cores just moves the same work around and adds contention.
+    # Sequential is therefore the default. On a machine with many more cores
+    # than one model can use, raising max_parallel_candidates may pay off —
+    # measure it there rather than assuming, as these numbers show.
+    total_cores = os.cpu_count() or 1
+    workers = max(1, min(len(runnable), int(settings.get("max_parallel_candidates") or 1)))
+    per_model_jobs = max(1, total_cores // workers) if workers > 1 else int(settings.get("n_jobs", -1))
+    if runnable:
+        context.log(
+            f"Training {len(runnable)} candidate(s) across {workers} worker(s), "
+            f"{per_model_jobs} core(s) each of {total_cores}"
+        )
 
-        context.progress(base, f"Training {candidate.get('label', candidate['candidate_id'])}")
+    completed = 0
+    progress_lock = threading.Lock()
+
+    def _train_one(candidate: dict) -> tuple[str, dict]:
+        """Fit one candidate and write its artifacts. Runs on a worker thread."""
+        nonlocal completed
+        model_type = candidate["model_type"]
+        label = candidate.get("label", candidate["candidate_id"])
+
+        def _progress(fraction: float, message: str) -> None:
+            # Per-candidate fractions are meaningless once several run at once,
+            # so only the message is surfaced; the bar tracks completions.
+            with progress_lock:
+                context.log(f"{candidate['candidate_id']}: {message}")
+
         try:
             result = trainer.train_candidate(
                 model_type=model_type,
@@ -401,19 +433,16 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
                 search_spaces=candidate.get("search_spaces"),
                 n_trials=int(candidate.get("n_trials", settings.get("n_trials", 30))),
                 timeout_seconds=settings.get("timeout_seconds"),
-                n_jobs=int(settings.get("n_jobs", -1)),
+                n_jobs=per_model_jobs,
                 seed=int(settings.get("seed", 42)),
                 progress=_progress,
                 should_cancel=context.cancelled,
             )
-        except trainer.TrainingCancelled:
-            raise
         except trainer.ModelUnavailable as exc:
-            challengers[candidate["candidate_id"]] = {
+            return candidate["candidate_id"], {
                 "candidate_id": candidate["candidate_id"], "model_type": model_type,
                 "skipped": str(exc),
             }
-            continue
 
         estimator = result.pop("_estimator")
         result.pop("_raw_estimator", None)
@@ -428,17 +457,15 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
             champion_bench["threshold"], settings.get("threshold_criterion", "f1"),
         )
         selected_threshold = threshold_analysis["selected_threshold"]
-
         latency = evaluator.measure_latency(
             lambda X, est=estimator: trainer._predict_proba(est, X), matrices["X_test"]
         )
         test_metrics = evaluator.metrics_at_threshold(
             matrices["y_test"], proba_test, selected_threshold
         )
-
         result.update({
             "candidate_id": candidate["candidate_id"],
-            "label": candidate.get("label", candidate["candidate_id"]),
+            "label": label,
             "model_path": str(model_path.relative_to(run_dir)),
             "threshold_analysis": threshold_analysis,
             "selected_threshold": selected_threshold,
@@ -447,14 +474,41 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
             "latency": latency,
         })
         np.save(run_dir / f"proba_test_{candidate['candidate_id']}.npy", proba_test)
-        challengers[candidate["candidate_id"]] = result
         # Checkpoint last, once the model and probabilities are both on disk, so
         # a checkpoint always implies its artifacts exist.
         write_candidate_checkpoint(run_dir, candidate["candidate_id"], result)
-        context.log(
-            f"{candidate['candidate_id']}: test F1 {test_metrics['f1']} at threshold "
-            f"{selected_threshold} ({threshold_analysis['selected_candidate']})"
-        )
+
+        with progress_lock:
+            completed += 1
+            context.progress(
+                0.14 + 0.72 * (completed / max(len(runnable), 1)),
+                f"{completed} of {len(runnable)} candidates finished ({label})",
+            )
+            context.log(
+                f"{candidate['candidate_id']}: test F1 {test_metrics['f1']} at threshold "
+                f"{selected_threshold} ({threshold_analysis['selected_candidate']})"
+            )
+        return candidate["candidate_id"], result
+
+    if context.cancelled():
+        raise trainer.TrainingCancelled("Cancelled before training started")
+
+    if runnable:
+        context.progress(0.14, f"Training {len(runnable)} candidate(s)")
+        if workers == 1:
+            for candidate in runnable:
+                if context.cancelled():
+                    raise trainer.TrainingCancelled("Cancelled before the next candidate")
+                candidate_id, result = _train_one(candidate)
+                challengers[candidate_id] = result
+        else:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                futures = {pool.submit(_train_one, c): c for c in runnable}
+                for future in as_completed(futures):
+                    # A cancellation inside any worker surfaces here; the others
+                    # observe context.cancelled() and stop at their next check.
+                    candidate_id, result = future.result()
+                    challengers[candidate_id] = result
 
     trained = {k: v for k, v in challengers.items() if "skipped" not in v}
     if not trained:
@@ -462,21 +516,26 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
 
     # ── Rolling backtest for stability ──────────────────────────────────────
     backtest: dict = {}
-    if settings.get("run_backtest", True) and prepared["dates"] is not None:
+    backtest_requested = bool(settings.get("run_backtest", False))
+    if backtest_requested and prepared["dates"] is not None:
         context.progress(0.90, "Running rolling-origin backtest")
         windows = int(settings.get("backtest_windows") or trainer.auto_backtest_windows(prepared["dates"]))
-        for model_type in sorted({v["model_type"] for v in trained.values()}):
-            try:
-                backtest[model_type] = trainer.rolling_backtest(
-                    prepared["frame"], prepared["features_config"], prepared["dates"],
-                    model_type, n_windows=windows, seed=int(settings.get("seed", 42)),
-                    should_cancel=context.cancelled,
-                )
-            except trainer.TrainingCancelled:
-                raise
-            except Exception as exc:  # diagnostic only — never fails the run
-                context.log(f"Backtest for {model_type} skipped: {exc}")
-                backtest[model_type] = {"model_type": model_type, "error": str(exc), "completed": False}
+        model_types = sorted({v["model_type"] for v in trained.values()})
+        try:
+            # One pass over the windows for every model type: the preprocessing
+            # state depends on the split, not the estimator.
+            backtest = trainer.rolling_backtest_many(
+                prepared["frame"], prepared["features_config"], prepared["dates"],
+                model_types, n_windows=windows, seed=int(settings.get("seed", 42)),
+                should_cancel=context.cancelled,
+            )
+        except trainer.TrainingCancelled:
+            raise
+        except Exception as exc:  # diagnostic only — never fails the run
+            context.log(f"Backtest skipped: {exc}")
+            backtest = {
+                m: {"model_type": m, "error": str(exc), "completed": False} for m in model_types
+            }
 
     context.progress(0.96, "Writing run artifacts")
     np.save(run_dir / "proba_test_champion.npy", champion_bench["proba_test"])
@@ -512,6 +571,7 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
         },
         "challengers": challengers,
         "backtest": backtest,
+        "backtest_requested": backtest_requested,
         "available_model_types": available,
     }
     _atomic_json(run_record, run_dir / "run_results.json")

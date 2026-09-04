@@ -105,6 +105,7 @@ def _build_run(
         "seed": request.seed,
         "second_family": request.second_family,
         "include_baseline": request.include_baseline,
+        "max_parallel_candidates": request.max_parallel_candidates,
         "run_backtest": request.run_backtest,
         "backtest_windows": request.backtest_windows,
         "threshold_criterion": request.threshold_criterion,

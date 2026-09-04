@@ -215,6 +215,7 @@ def _pct_delta(challenger: float | None, champion: float | None) -> float | None
 
 def evaluate_gate(champion_metrics: dict, challenger_metrics: dict, gate: dict,
                   historical: dict | None = None, backtest_ok: bool | None = None,
+                  backtest_status: str = "unknown",
                   package_ok: bool | None = None,
                   data_quality_blockers: list[str] | None = None) -> dict:
     """Apply the approved gate. Returns RECOMMENDED / NOT_RECOMMENDED / BLOCKED.
@@ -234,8 +235,23 @@ def evaluate_gate(champion_metrics: dict, challenger_metrics: dict, gate: dict,
 
     if gate.get("require_package_validation") and package_ok is False:
         blockers.append("Export package validation has not passed.")
-    if gate.get("require_backtest_pass") and backtest_ok is False:
-        blockers.append("Rolling backtest did not complete successfully.")
+    if gate.get("require_backtest_pass"):
+        if backtest_ok is False:
+            blockers.append("Rolling backtest did not complete successfully.")
+        elif backtest_status == "not_run":
+            # The backtest is opt-in. Its absence is not a pass: without it there
+            # is no evidence the improvement holds over time, and saying nothing
+            # would let a one-off result read as a stable one.
+            rules.append({
+                "rule": "rolling backtest confirms stability over time",
+                "champion": None,
+                "challenger": None,
+                "passed": None,
+                "detail": (
+                    "Not assessed — the backtest was not run for this run. Enable it in "
+                    "Stage 5 to check the improvement holds across time windows."
+                ),
+            })
 
     primary = gate.get("primary_metric", "f1")
     min_improvement = float(gate.get("min_primary_improvement_pct", 0.0))

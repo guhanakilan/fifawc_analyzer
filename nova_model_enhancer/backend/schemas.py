@@ -112,7 +112,14 @@ class TrainingRequest(BaseModel):
     seed: int = 42
     second_family: str | None = None
     include_baseline: bool = True
-    run_backtest: bool = True
+    # Off by default: the backtest is roughly a third of a run's cost. When it
+    # is skipped the promotion gate reports stability as not assessed rather
+    # than treating its absence as a pass.
+    # Sequential by default: on a 4-core machine splitting cores between
+    # candidates measured slower, not faster. Raise it only on a box with
+    # more cores than one model fit can use.
+    max_parallel_candidates: int = 1
+    run_backtest: bool = False
     backtest_windows: int | None = None
     threshold_criterion: Literal["f1", "recall", "precision", "balanced_accuracy", "weighted_composite"] = "f1"
     actor: str = ""

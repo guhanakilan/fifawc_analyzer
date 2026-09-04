@@ -368,7 +368,13 @@ export default function ComparisonStage({ job, mark, go }) {
                 },
                 {
                   key: "passed", header: "Result",
-                  render: (r) => <Pill tone={r.passed ? "ok" : "bad"}>{r.passed ? "pass" : "fail"}</Pill>,
+                  // null is a third state: the rule could not be evaluated. Showing
+                  // it as "fail" would be wrong, and as "pass" would be worse.
+                  render: (r) => (
+                    r.passed === null || r.passed === undefined
+                      ? <Pill tone="muted">not assessed</Pill>
+                      : <Pill tone={r.passed ? "ok" : "bad"}>{r.passed ? "pass" : "fail"}</Pill>
+                  ),
                 },
               ]}
               rows={gateResult.rules}
