@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class HealthResponse(BaseModel):
@@ -42,7 +42,33 @@ class ReadinessDecisions(BaseModel):
     allow_unmapped_default: bool = False
     acknowledge_model_output_target: bool = False
     historical_window_days: int | None = None
+    # Explicit training window. Either bound may stand alone. When both a range
+    # and a days-back value are present the range wins, and the snapshot
+    # manifest records which one was applied.
+    date_from: str | None = None
+    date_to: str | None = None
     approver: str
+
+    @field_validator("date_from", "date_to")
+    @classmethod
+    def _valid_date(cls, value: str | None) -> str | None:
+        if value is None or not str(value).strip():
+            return None
+        import pandas as pd
+
+        parsed = pd.to_datetime(str(value).strip(), errors="coerce")
+        if pd.isna(parsed):
+            raise ValueError(f"'{value}' is not a date this application can read.")
+        return str(value).strip()
+
+    @model_validator(mode="after")
+    def _range_is_ordered(self):
+        if self.date_from and self.date_to:
+            import pandas as pd
+
+            if pd.to_datetime(self.date_from) > pd.to_datetime(self.date_to):
+                raise ValueError("The training window starts after it ends.")
+        return self
 
     @field_validator("approver")
     @classmethod

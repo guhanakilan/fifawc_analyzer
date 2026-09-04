@@ -81,6 +81,8 @@ export const api = {
   recommendations: (jobId) => request(`/api/rules/${jobId}/recommendations`),
   interventions: (jobId) => request(`/api/rules/${jobId}/interventions`),
   saveDecisions: (jobId, payload) => request(`/api/readiness/${jobId}/decisions`, json(payload)),
+  windowPreview: (jobId, payload) =>
+    request(`/api/readiness/${jobId}/window-preview`, json(payload)),
   buildSnapshot: (jobId) => request(`/api/readiness/${jobId}/snapshot`, { method: "POST" }),
   snapshot: (jobId) => request(`/api/readiness/${jobId}/snapshot`),
 

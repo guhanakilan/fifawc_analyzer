@@ -41,6 +41,9 @@ class SnapshotDecisions:
     allow_unmapped_default: bool
     historical_window_days: int | None
     approver: str
+    # Explicit training window; wins over historical_window_days when set.
+    date_from: str | None = None
+    date_to: str | None = None
 
 
 def atomic_write_parquet(df: pd.DataFrame, destination: Path) -> None:
@@ -158,9 +161,39 @@ def build_snapshot(
     dates = pd.to_datetime(df[date_col], errors="coerce")
     unparseable_dates = int(dates.isna().sum())
 
-    # ── Historical window ────────────────────────────────────────────────────
+    # ── Training window ──────────────────────────────────────────────────────
+    #
+    # An explicit from/to range takes precedence over the older days-back value,
+    # so a job saved before ranges existed keeps working unchanged. Rows whose
+    # date will not parse are kept either way: silently dropping them here would
+    # shrink the dataset without saying so, and they are counted separately in
+    # the manifest.
     window_dropped = 0
-    if decisions.historical_window_days:
+    window_applied = None
+    window_bounds: dict = {}
+
+    if decisions.date_from or decisions.date_to:
+        keep = dates.isna()
+        lower = pd.to_datetime(decisions.date_from) if decisions.date_from else None
+        upper = pd.to_datetime(decisions.date_to) if decisions.date_to else None
+        inside = pd.Series(True, index=dates.index)
+        if lower is not None:
+            inside &= dates >= lower
+        if upper is not None:
+            # An upper bound given as a date means the whole of that day.
+            if upper == upper.normalize():
+                upper = upper + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+            inside &= dates <= upper
+        keep = keep | inside.fillna(False)
+        window_dropped = int((~keep).sum())
+        df = df[keep].reset_index(drop=True)
+        dates = dates[keep].reset_index(drop=True)
+        window_applied = "explicit_range"
+        window_bounds = {
+            "from": decisions.date_from,
+            "to": decisions.date_to,
+        }
+    elif decisions.historical_window_days:
         newest = dates.max()
         if pd.notna(newest):
             cutoff = newest - pd.Timedelta(days=int(decisions.historical_window_days))
@@ -168,6 +201,14 @@ def build_snapshot(
             window_dropped = int((~keep).sum())
             df = df[keep].reset_index(drop=True)
             dates = dates[keep].reset_index(drop=True)
+            window_applied = "days_back"
+            window_bounds = {"from": cutoff.isoformat(), "to": newest.isoformat()}
+
+    if window_applied and df.empty:
+        raise SnapshotError(
+            "The training window you chose contains no rows. Widen the range, or "
+            "check that the date column you approved is the one the window refers to."
+        )
 
     # ── Labels ───────────────────────────────────────────────────────────────
     label_stats: dict = {}
@@ -277,6 +318,8 @@ def build_snapshot(
         },
         "exclusions": {
             "historical_window_days": decisions.historical_window_days,
+            "training_window_mode": window_applied,
+            "training_window": window_bounds,
             "rows_outside_window": window_dropped,
             "rows_ignored_by_subtask_mapping": label_stats.get("ignored_count", 0),
             "duplicate_rows_removed": duplicates_removed,

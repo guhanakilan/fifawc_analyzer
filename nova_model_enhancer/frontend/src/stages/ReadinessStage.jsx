@@ -51,6 +51,8 @@ export default function ReadinessStage({ job, mark, go }) {
           dedup_mode: saved?.dedup_mode || "",
           dedup_keys: saved?.dedup_keys || [],
           historical_window_days: saved?.historical_window_days ?? "",
+          date_from: saved?.date_from || "",
+          date_to: saved?.date_to || "",
           allow_unmapped_default: Boolean(saved?.allow_unmapped_default),
           acknowledge_model_output_target: Boolean(saved?.acknowledge_model_output_target),
           approver: saved?.approver || "",
@@ -138,6 +140,8 @@ export default function ReadinessStage({ job, mark, go }) {
         acknowledge_model_output_target: form.acknowledge_model_output_target,
         historical_window_days: form.historical_window_days === ""
           ? null : Number(form.historical_window_days),
+        date_from: form.date_from || null,
+        date_to: form.date_to || null,
         approver: form.approver.trim(),
       });
       const manifest = await api.buildSnapshot(job.job_id);
@@ -218,19 +222,14 @@ export default function ReadinessStage({ job, mark, go }) {
               ))}
             </select>
           </Field>
-          <Field
-            label="Historical window (days, optional)"
-            htmlFor="window-days"
-            hint="Rows older than this many days before the newest row are excluded."
-          >
-            <input
-              id="window-days" type="number" min="1"
-              placeholder="Leave empty to use every row"
-              value={form.historical_window_days}
-              onChange={(e) => set("historical_window_days", e.target.value)}
-            />
-          </Field>
         </FormGrid>
+
+        <TrainingWindow
+          jobId={job.job_id}
+          form={form}
+          set={set}
+          span={review.date_spans?.[form.date_column]}
+        />
 
         <SubHeading>Where the label comes from</SubHeading>
         <FormGrid>
@@ -773,5 +772,153 @@ function Recommendations({ advice, form, applied, onApply }) {
         ))}
       </div>
     </Card>
+  );
+}
+
+/* ── Training window ───────────────────────────────────────────────────────
+ *
+ * An explicit from/to range over the approved date column. The preview is the
+ * point: narrowing the window changes what the model is trained on, and that
+ * consequence should be visible while choosing it rather than discovered after
+ * the dataset is frozen.
+ */
+
+function TrainingWindow({ jobId, form, set, span }) {
+  const [preview, setPreview] = React.useState(null);
+  const [previewError, setPreviewError] = React.useState(null);
+  const [checking, setChecking] = React.useState(false);
+
+  const { date_column: dateColumn, date_from: from, date_to: to } = form;
+
+  React.useEffect(() => {
+    if (!dateColumn) {
+      setPreview(null);
+      return () => {};
+    }
+    let live = true;
+    setChecking(true);
+    setPreviewError(null);
+    const timer = setTimeout(() => {
+      api
+        .windowPreview(jobId, {
+          date_column: dateColumn,
+          date_from: from || null,
+          date_to: to || null,
+        })
+        .then((body) => live && setPreview(body))
+        .catch((error) => live && setPreviewError(error))
+        .finally(() => live && setChecking(false));
+    }, 350);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [jobId, dateColumn, from, to]);
+
+  const narrowed = preview && preview.rows_excluded > 0;
+
+  return (
+    <>
+      <SubHeading>Training window</SubHeading>
+      {!dateColumn && (
+        <Notice tone="info" title="Choose a date column first">
+          The window is applied to whichever date column you approve above.
+        </Notice>
+      )}
+
+      {dateColumn && (
+        <>
+          <FormGrid>
+            <Field
+              label="From"
+              htmlFor="window-from"
+              hint={span ? `Earliest row: ${span.from}` : "Earliest row in your data"}
+            >
+              <input
+                id="window-from" type="date"
+                min={span?.from} max={span?.to}
+                value={form.date_from}
+                onChange={(e) => set("date_from", e.target.value)}
+              />
+            </Field>
+            <Field
+              label="To"
+              htmlFor="window-to"
+              hint={span ? `Latest row: ${span.to}` : "Latest row in your data"}
+            >
+              <input
+                id="window-to" type="date"
+                min={span?.from} max={span?.to}
+                value={form.date_to}
+                onChange={(e) => set("date_to", e.target.value)}
+              />
+            </Field>
+          </FormGrid>
+
+          <ActionRow note="Leave both empty to train on every row.">
+            <Btn
+              variant="ghost" small
+              disabled={!form.date_from && !form.date_to}
+              onClick={() => {
+                set("date_from", "");
+                set("date_to", "");
+              }}
+            >
+              <MIcon name="restart_alt" size={14} /> Use everything
+            </Btn>
+            {span && (
+              <Btn
+                variant="ghost" small
+                onClick={() => {
+                  set("date_from", span.from);
+                  set("date_to", span.to);
+                }}
+              >
+                <MIcon name="history" size={14} /> Full span
+              </Btn>
+            )}
+          </ActionRow>
+
+          <ErrorNotice error={previewError} title="That window could not be previewed" />
+
+          {preview && !previewError && (
+            <MetricGrid
+              compact
+              min={150}
+              items={[
+                {
+                  label: "Rows selected",
+                  value: num(preview.rows_selected),
+                  color: preview.rows_selected === 0 ? "#EF4444" : C.navy,
+                  sub: narrowed ? `${num(preview.rows_excluded)} excluded` : "all rows",
+                },
+                { label: "From", value: preview.actual_from || "—" },
+                { label: "To", value: preview.actual_to || "—" },
+                {
+                  label: "Voice",
+                  value: preview.class_balance ? pct(preview.class_balance.voice_pct, 1) : "—",
+                  sub: preview.class_balance ? undefined : "needs mapped SubTasks",
+                },
+                {
+                  label: "Non-Voice",
+                  value: preview.class_balance ? pct(preview.class_balance.non_voice_pct, 1) : "—",
+                },
+              ]}
+            />
+          )}
+
+          {preview?.rows_selected === 0 && (
+            <Notice tone="bad" title="This window contains no rows">
+              Widen the range, or check that the date column you approved is the one this
+              window refers to. The snapshot cannot be built from an empty selection.
+            </Notice>
+          )}
+
+          {checking && (
+            <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)" }}>Checking window…</div>
+          )}
+        </>
+      )}
+    </>
   );
 }

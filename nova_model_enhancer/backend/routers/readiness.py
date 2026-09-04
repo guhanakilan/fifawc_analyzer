@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..config import job_dir
 from ..database import (
@@ -19,6 +20,7 @@ from ..database import (
 )
 from ..schemas import ReadinessDecisions
 from ..services import labeling
+from ..services import rules as rules_engine
 from ..services import snapshot as snapshot_service
 from ..services.champion import load_configs
 from ..services.data_profiler import (
@@ -116,6 +118,21 @@ def review(job_id: str):
         (fitted_decision or {}).get("value", {}).get("feature_names"),
     )
 
+    # The real span of each date candidate, so the window pickers open on the
+    # data that exists rather than on today's date.
+    date_spans = {}
+    for candidate in date_candidates:
+        parsed = pd.to_datetime(df[candidate], errors="coerce")
+        valid = parsed.dropna()
+        if valid.empty:
+            continue
+        date_spans[candidate] = {
+            "from": valid.min().date().isoformat(),
+            "to": valid.max().date().isoformat(),
+            "days": int((valid.max() - valid.min()).days),
+            "unparseable": int(parsed.isna().sum()),
+        }
+
     duplicate_full_rows = int(df.duplicated().sum())
     key_candidates = [
         c for c in columns
@@ -150,6 +167,7 @@ def review(job_id: str):
             "missing_column_count": drift["missing_column_count"],
         },
         "column_lineage": lineage,
+        "date_spans": date_spans,
         "duplicates": {
             "full_row_duplicates": duplicate_full_rows,
             "key_column_candidates": key_candidates,
@@ -198,6 +216,73 @@ def save_decisions(job_id: str, decisions: ReadinessDecisions):
     return {"saved": True, "decisions": payload}
 
 
+class WindowPreviewRequest(BaseModel):
+    date_column: str
+    date_from: str | None = None
+    date_to: str | None = None
+
+
+@router.post("/{job_id}/window-preview")
+def window_preview(job_id: str, request: WindowPreviewRequest):
+    """Rows and class balance for a proposed training window, before committing.
+
+    Read-only: nothing is saved and no snapshot is built. This exists so the
+    consequence of narrowing the window is visible while choosing it, rather
+    than discovered after the dataset is frozen.
+    """
+    require_job(job_id)
+    if not get_training_assets(job_id):
+        raise HTTPException(status_code=409, detail="Upload training data first.")
+
+    df = _load_combined(job_id)
+    if request.date_column not in df.columns:
+        raise HTTPException(
+            status_code=422, detail="That date column is not present in the uploaded data."
+        )
+
+    configs = load_configs(_job_paths(job_id)["extract_dir"])
+    dates = pd.to_datetime(df[request.date_column], errors="coerce")
+
+    inside = pd.Series(True, index=dates.index)
+    try:
+        if request.date_from:
+            inside &= dates >= pd.to_datetime(request.date_from)
+        if request.date_to:
+            upper = pd.to_datetime(request.date_to)
+            if upper == upper.normalize():
+                upper = upper + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+            inside &= dates <= upper
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail="That window could not be read as dates.") from exc
+
+    # Unparseable dates are kept, matching what the snapshot builder does.
+    keep = dates.isna() | inside.fillna(False)
+    selected = df[keep]
+
+    subtask_review = labeling.subtask_inventory(selected, configs.subtask_mappings)
+    labelled, reason = rules_engine.derive_labelled_frame(selected, configs, subtask_review)
+    balance = None
+    if labelled is not None and len(labelled):
+        balance = {
+            "voice_pct": round(100.0 * float((labelled["NonVoiceFlag"] == labeling.VOICE).mean()), 2),
+            "non_voice_pct": round(
+                100.0 * float((labelled["NonVoiceFlag"] == labeling.NON_VOICE).mean()), 2
+            ),
+            "labelled_rows": int(len(labelled)),
+        }
+
+    valid = dates[keep].dropna()
+    return {
+        "rows_selected": int(len(selected)),
+        "rows_total": int(len(df)),
+        "rows_excluded": int(len(df) - len(selected)),
+        "actual_from": valid.min().date().isoformat() if len(valid) else None,
+        "actual_to": valid.max().date().isoformat() if len(valid) else None,
+        "class_balance": balance,
+        "balance_unavailable_reason": None if balance else reason,
+    }
+
+
 @router.post("/{job_id}/snapshot")
 def build_snapshot(job_id: str):
     """Freeze the dataset. Runs synchronously so its failure is immediate and visible."""
@@ -225,6 +310,8 @@ def build_snapshot(job_id: str):
         subtask_keywords=value.get("subtask_keywords") or configs.subtask_keywords,
         allow_unmapped_default=bool(value.get("allow_unmapped_default")),
         historical_window_days=value.get("historical_window_days"),
+        date_from=value.get("date_from"),
+        date_to=value.get("date_to"),
         approver=value["approver"],
     )
 
