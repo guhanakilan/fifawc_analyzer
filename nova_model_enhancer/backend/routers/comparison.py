@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from ..database import get_decision, record_audit, set_decision, update_job, utc_now
 from ..schemas import GateApprovalRequest, PromotionApprovalRequest
@@ -77,6 +78,68 @@ def compare(job_id: str, run_id: str):
     result["approval"] = approval["value"] if approval else None
     result["gate_approved"] = bool(gate_config.get("approved"))
     return result
+
+
+class ThresholdRequest(BaseModel):
+    candidate_id: str
+    threshold: float
+
+
+@router.get("/thresholds")
+def thresholds():
+    """The selectable threshold grid, so the UI cannot offer a value the API rejects."""
+    return {
+        "grid": evaluator.threshold_grid(),
+        "min": evaluator.MIN_THRESHOLD,
+        "max": evaluator.MAX_THRESHOLD,
+        "step": evaluator.THRESHOLD_STEP,
+        "note": (
+            f"Thresholds run from {evaluator.MIN_THRESHOLD:g} to "
+            f"{evaluator.MAX_THRESHOLD:g} in steps of {evaluator.THRESHOLD_STEP:g}. Below "
+            "0.5 the model would be calling Voice on rows it believes are Non-Voice."
+        ),
+    }
+
+
+@router.post("/{job_id}/runs/{run_id}/threshold")
+def rescore_at_threshold(job_id: str, run_id: str, request: ThresholdRequest):
+    """Metrics for one candidate at a chosen threshold, without retraining.
+
+    Read-only: the saved probabilities are re-thresholded, nothing is persisted
+    and the run's own selected threshold is untouched.
+    """
+    require_job(job_id)
+    assert_safe_id(run_id)
+    assert_safe_id(request.candidate_id)
+
+    try:
+        threshold = evaluator.clamp_threshold(request.threshold)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    run_dir = _job_paths(job_id)["runs_dir"] / run_id
+    y_path = run_dir / "y_test.npy"
+    proba_path = run_dir / f"proba_test_{request.candidate_id}.npy"
+    if not y_path.exists() or not proba_path.exists():
+        raise HTTPException(
+            status_code=404, detail="Predictions for that candidate are not available."
+        )
+
+    import numpy as np
+
+    y_test = np.load(y_path)
+    proba = np.load(proba_path)
+    gate_config = _gate_for(job_id)
+    cost_ratio = float(gate_config.get("cost_ratio") or evaluator.DEFAULT_COST_RATIO)
+
+    return {
+        "candidate_id": request.candidate_id,
+        "threshold": threshold,
+        "requested_threshold": request.threshold,
+        "snapped": threshold != float(request.threshold),
+        "test_metrics": evaluator.metrics_at_threshold(y_test, proba, threshold),
+        "cost": evaluator.cost_weighted(y_test, proba, threshold, cost_ratio),
+    }
 
 
 @router.post("/{job_id}/approve")

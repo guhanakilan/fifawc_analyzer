@@ -330,6 +330,12 @@ export default function ComparisonStage({ job, mark, go }) {
               rowKey={(row) => row.model}
             />
 
+            <ThresholdExplorer
+              jobId={job.job_id}
+              runId={comparison.run_id || runId}
+              comparison={comparison}
+              selected={selected}
+            />
             <SignificanceSection comparison={comparison} selected={selected} />
             <OperatingSection comparison={comparison} selected={selected} />
             <DisagreementSection comparison={comparison} selected={selected} />
@@ -903,5 +909,126 @@ function GuidanceSection({ guidance }) {
         </div>
       ))}
     </Card>
+  );
+}
+
+/* ── Threshold explorer ────────────────────────────────────────────────────
+ *
+ * The decision threshold is floored at 0.50 and stepped at 0.05. Below a coin
+ * flip the model would be calling Voice on rows it believes are Non-Voice,
+ * which is not an operating point to reach by accident.
+ *
+ * Exploring here changes nothing: the saved probabilities are re-thresholded on
+ * the server and the run's own selected threshold is untouched.
+ */
+
+function ThresholdExplorer({ jobId, runId, comparison, selected }) {
+  const [grid, setGrid] = React.useState(null);
+  const [value, setValue] = React.useState(null);
+  const [scored, setScored] = React.useState(null);
+  const [error, setError] = React.useState(null);
+
+  const candidate = comparison.candidates?.[selected];
+  const chosen = candidate?.selected_threshold;
+  const range = candidate?.threshold_analysis?.threshold_range;
+  const championBelowFloor = candidate?.threshold_analysis?.champion_below_floor;
+
+  React.useEffect(() => {
+    api.thresholds().then(setGrid).catch(() => setGrid(null));
+  }, []);
+
+  React.useEffect(() => {
+    setValue(chosen ?? null);
+    setScored(null);
+  }, [chosen, selected]);
+
+  React.useEffect(() => {
+    if (!value || !runId || !selected) return () => {};
+    let live = true;
+    setError(null);
+    api
+      .rescore(jobId, runId, { candidate_id: selected, threshold: value })
+      .then((body) => live && setScored(body))
+      .catch((err) => live && setError(err));
+    return () => {
+      live = false;
+    };
+  }, [jobId, runId, selected, value]);
+
+  if (!grid) return null;
+
+  const metrics = scored?.test_metrics;
+  const baseline = candidate?.test_metrics;
+  const moved = value != null && chosen != null && Math.abs(value - chosen) > 1e-9;
+
+  return (
+    <>
+      <SubHeading>Decision threshold</SubHeading>
+
+      {championBelowFloor && (
+        <Notice tone="warn" title="The champion runs below this floor">
+          {candidate.threshold_analysis.selection_note}
+        </Notice>
+      )}
+
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
+        {grid.grid.map((t) => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => setValue(t)}
+            style={{
+              padding: "5px 11px",
+              borderRadius: 6,
+              cursor: "pointer",
+              fontFamily: "var(--nova-font-mono)",
+              fontSize: 12,
+              fontWeight: 700,
+              border: `1.5px solid ${value === t ? C.green : "var(--nova-input-border)"}`,
+              background: value === t ? `${C.green}1A` : "var(--nova-input-bg)",
+              color: value === t ? C.green : "inherit",
+            }}
+          >
+            {t.toFixed(2)}
+            {Math.abs(t - (chosen ?? -1)) < 1e-9 ? " ★" : ""}
+          </button>
+        ))}
+      </div>
+
+      <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginBottom: 10 }}>
+        {grid.note} ★ marks the threshold this run selected.
+        {moved && " Exploring here changes nothing that is saved."}
+      </div>
+
+      <ErrorNotice error={error} title="Could not rescore at that threshold" />
+
+      {metrics && (
+        <MetricGrid
+          compact
+          min={140}
+          items={[
+            {
+              label: "F1", value: metric(metrics.f1),
+              sub: baseline ? `selected ${metric(baseline.f1)}` : undefined,
+              color: baseline && metrics.f1 < baseline.f1 ? "#EF4444" : C.green,
+            },
+            { label: "Precision", value: metric(metrics.precision) },
+            { label: "Recall", value: metric(metrics.recall) },
+            {
+              label: "Weighted cost",
+              value: num(scored.cost?.total_cost),
+              sub: `${scored.cost?.cost_ratio}:1 missed-Voice`,
+            },
+            { label: "Missed Voice", value: num(scored.cost?.missed_voice) },
+          ]}
+        />
+      )}
+      {range && (
+        <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)" }}>
+          Allowed range {range.min}–{range.max}, step {range.step}. The backend rejects anything
+          outside it, so this control cannot offer a value the API would refuse.
+        </div>
+      )}
+    </>
   );
 }

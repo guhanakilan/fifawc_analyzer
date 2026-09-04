@@ -23,8 +23,32 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 
-# Same sweep grid and composite weights as `routers/evaluation.py`.
-SWEEP_START, SWEEP_STOP, SWEEP_STEP = 0.10, 0.92, 0.05
+# Threshold sweep grid. The reference swept from 0.10; this application floors
+# it at 0.50 by decision — below a coin flip the model is calling Voice on rows
+# it believes are Non-Voice, which is not an operating point anyone wants to
+# land on by accident. 0.50 to 0.90 inclusive, in steps of 0.05.
+MIN_THRESHOLD, MAX_THRESHOLD, THRESHOLD_STEP = 0.50, 0.90, 0.05
+SWEEP_START, SWEEP_STOP, SWEEP_STEP = MIN_THRESHOLD, MAX_THRESHOLD + 0.001, THRESHOLD_STEP
+
+
+def threshold_grid() -> list[float]:
+    """Every selectable threshold, as the UI and the backend both see it."""
+    import numpy as _np
+
+    steps = int(round((MAX_THRESHOLD - MIN_THRESHOLD) / THRESHOLD_STEP)) + 1
+    return [round(float(v), 2) for v in _np.linspace(MIN_THRESHOLD, MAX_THRESHOLD, steps)]
+
+
+def clamp_threshold(value: float) -> float:
+    """Snap a challenger threshold onto the grid, refusing anything outside it."""
+    numeric = float(value)
+    if numeric < MIN_THRESHOLD or numeric > MAX_THRESHOLD:
+        raise ValueError(
+            f"Threshold {numeric:g} is outside the allowed range "
+            f"{MIN_THRESHOLD:g}–{MAX_THRESHOLD:g}."
+        )
+    grid = threshold_grid()
+    return min(grid, key=lambda candidate: abs(candidate - numeric))
 W_RECALL, W_F1, W_PRECISION, W_ACCURACY, W_SPECIFICITY = 0.40, 0.30, 0.15, 0.10, 0.05
 
 PRIMARY_METRIC_CHOICES = ("f1", "recall", "precision", "auc", "pr_auc", "balanced_accuracy", "weighted_composite")

@@ -104,6 +104,9 @@ export const api = {
   gate: (jobId) => request(`/api/comparison/${jobId}/gate`),
   saveGate: (jobId, payload) => request(`/api/comparison/${jobId}/gate`, json(payload)),
   comparison: (jobId, runId) => request(`/api/comparison/${jobId}/runs/${runId}`),
+  thresholds: () => request("/api/comparison/thresholds"),
+  rescore: (jobId, runId, payload) =>
+    request(`/api/comparison/${jobId}/runs/${runId}/threshold`, json(payload)),
   approvePromotion: (jobId, payload) => request(`/api/comparison/${jobId}/approve`, json(payload)),
 
   mlTag: (jobId) => request(`/api/export/${jobId}/ml-tag`),

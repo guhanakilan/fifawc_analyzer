@@ -266,13 +266,26 @@ def test_weight_formula_is_recorded_verbatim():
 
 # ── Threshold and encoding ───────────────────────────────────────────────────
 
-def test_threshold_sweep_covers_the_reference_grid():
+def test_threshold_sweep_deliberately_floors_at_half():
+    """A documented divergence from the reference, not a parity break.
+
+    The reference sweeps from 0.10. This application floors the grid at 0.50 by
+    decision: below a coin flip the model is calling Voice on rows it believes
+    are Non-Voice, which is not an operating point to land on by accident. The
+    step and upper bound are unchanged, so every threshold the reference would
+    pick at or above 0.50 is still reachable.
+    """
+    from backend.services.evaluator import MAX_THRESHOLD, MIN_THRESHOLD, threshold_grid
+
     y = np.resize([0, 1], 400)
     rng = np.random.default_rng(0)
     proba = np.clip(y * 0.4 + rng.normal(0.3, 0.15, 400), 0, 1)
     result = threshold_sweep(y, proba)
     thresholds = [row["t"] for row in result["sweep"]]
-    assert thresholds[0] == 0.1 and thresholds[-1] == 0.9
+
+    assert thresholds[0] == MIN_THRESHOLD == 0.5
+    assert thresholds[-1] == MAX_THRESHOLD == 0.9
+    assert thresholds == threshold_grid(), "the sweep and the selectable grid must agree"
     assert all(criterion in result["best"] for criterion in ("f1", "recall", "precision"))
 
 

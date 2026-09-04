@@ -267,9 +267,16 @@ def choose_threshold(
     The sweep runs on validation rows only. Every candidate is then reported on
     the test rows, which the sweep never saw.
     """
+    # The champion is always scored at the threshold it actually runs on in
+    # production, even if that is below the floor this application enforces for
+    # challengers. Clamping it would report numbers for a model that does not
+    # exist; the disclosure below says so instead.
+    champion_value = float(champion_threshold)
+    champion_below_floor = champion_value < evaluator.MIN_THRESHOLD
+
     candidates: dict[str, float] = {
-        "champion_threshold": float(champion_threshold),
-        "neutral_0.5": 0.5,
+        "champion_threshold": champion_value,
+        f"floor_{evaluator.MIN_THRESHOLD:g}": evaluator.MIN_THRESHOLD,
     }
     sweep = None
     if proba_val is not None and y_val is not None and len(np.unique(y_val)) > 1:
@@ -277,23 +284,45 @@ def choose_threshold(
         best = sweep["best"].get(criterion) or sweep["best"]["f1"]
         candidates["validation_optimised"] = float(best["threshold"])
     else:
-        candidates["validation_optimised"] = float(champion_threshold)
+        candidates["validation_optimised"] = evaluator.MIN_THRESHOLD
 
     comparison = []
     for name, value in candidates.items():
         metrics = evaluator.metrics_at_threshold(y_test, proba_test, value)
         comparison.append({"candidate": name, "threshold": value, "test_metrics": metrics})
 
-    selected = max(comparison, key=lambda row: row["test_metrics"].get(criterion) or 0)
+    # A challenger may only be selected at a threshold on the allowed grid. The
+    # champion's own value stays in the table for comparison but cannot be
+    # adopted by a challenger when it sits below the floor.
+    selectable = [
+        row for row in comparison
+        if evaluator.MIN_THRESHOLD <= row["threshold"] <= evaluator.MAX_THRESHOLD
+    ] or [row for row in comparison if row["candidate"].startswith("floor_")]
+
+    selected = max(selectable, key=lambda row: row["test_metrics"].get(criterion) or 0)
     return {
         "criterion": criterion,
         "validation_sweep": sweep,
         "candidates": comparison,
         "selected_threshold": selected["threshold"],
         "selected_candidate": selected["candidate"],
+        "threshold_range": {
+            "min": evaluator.MIN_THRESHOLD,
+            "max": evaluator.MAX_THRESHOLD,
+            "step": evaluator.THRESHOLD_STEP,
+        },
+        "champion_below_floor": champion_below_floor,
         "selection_note": (
             "Threshold candidates are generated on the validation slice; the value "
-            "reported here is each candidate's performance on the held-out test slice."
+            "reported here is each candidate's performance on the held-out test slice. "
+            f"A challenger may only be selected between {evaluator.MIN_THRESHOLD:g} and "
+            f"{evaluator.MAX_THRESHOLD:g}."
+            + (
+                f" The champion runs at {champion_value:g}, below that floor; it is scored "
+                "at its real threshold here because reporting it at any other value would "
+                "describe a model that is not in production."
+                if champion_below_floor else ""
+            )
         ),
     }
 
