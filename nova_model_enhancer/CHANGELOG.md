@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.3.0 — champion parity and the escalating retrain loop
+
+### Same and only the champion's pipeline
+
+`features_config.json` was a blocking artifact, but validation checked only that
+the file existed. An empty one passed, and the pipeline then fabricated a config —
+Median imputation for every unconfigured numeric, Label encoding for every
+categorical — so the challenger was trained through preprocessing the champion never
+had. Intake now checks the file defines at least one rule, and the fabricator is gone.
+
+Threshold selection is removed. Every model is scored at the champion's own operating
+threshold, so a metric difference is the model and not the cutoff. Choosing per model
+compared two operating points as well as two models. The validation sweep is still
+shown as guidance and never applied.
+
+Custom columns were already reproduced faithfully — diffed against the reference's own
+`custom_cols._apply_derived_config`: all three types, all five date_part variants, same
+fallback and case-resolution semantics. What was missing was a check that reproduction
+succeeded, and writing it found a real gap: the reference treats an unrecognised
+`col_type` as "condition", which with no branches yields a column of nulls, so a custom
+column from a newer NoVA ML would appear to build and silently train as empty.
+
+### Escalating retrain loop
+
+Optional. Grows the champion's own family until a target is met — more trees, more
+branches, learning rate falling and regularisation tightening as capacity rises.
+
+Every round is scored on validation; the test split is read once, afterwards. On the
+verification run validation F1 reached 0.747 and test came in at 0.729. That gap is
+what a loop scored against its own target conceals, and it is now visible. Four stop
+rules: target reached, no improvement, round and time caps, and gain smaller than the
+run-to-run variation. The loop can fail, and says so.
+
+### Optional SQL Server source
+
+Read-only, Windows integrated authentication, no credential to store. The statement is
+a SELECT built over a configured table or view with dates bound as parameters — no query
+text reaches the endpoint and no stored procedure can be called. Strictly optional: with
+no driver and no configuration the card says so and file upload is unaffected, which is
+what the brief's "do not *require* direct SQL Server access" asks for.
+
+### Fixes
+
+* A call to `setGateApprover` survived the merge of the four approver inputs in 1.2.0.
+  Vite compiles that happily and the comparison stage died at runtime, blank. A test now
+  checks every state setter a component calls exists — the one class of error a build
+  cannot catch.
+* The escalation result was dropped between the pipeline and the comparison screen.
+* The comparison endpoint took 5.2s: 1.2.0's bootstrap ran 400 sklearn calls per model
+  across six models. Threshold metrics now come from resampled confusion counts as array
+  operations — 0.76s to 0.015s per model, 5.2s to 0.69s overall, with a test asserting
+  the fast path and a scorer loop agree exactly.
+* The app reported version 1.0.0 in its footer, `/health` and every export's provenance
+  record, two releases behind.
+
+
 ## 1.2.0 — ten corrections and enhancements
 
 Each item below was agreed before implementation, and each was verified against the real
