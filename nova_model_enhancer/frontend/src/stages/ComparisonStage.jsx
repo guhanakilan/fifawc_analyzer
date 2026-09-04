@@ -2,7 +2,7 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  ActionRow, Badge, Btn, C, Card, CheckRow, EmptyState, ErrorNotice, Field,
+  ActionRow, ApprovalIdentity, Badge, Btn, C, Card, CheckRow, EmptyState, ErrorNotice, Field,
   FormGrid, MIcon, MetricGrid, Notice, Pill, SectionTitle, SubHeading, Table,
 } from "../nova/Components.jsx";
 import { useTheme } from "../nova/theme.jsx";
@@ -19,15 +19,13 @@ const GATE_TONE = {
   RECOMMENDED: "ok", NOT_RECOMMENDED: "warn", BLOCKED: "bad", APPROVED: "ok",
 };
 
-export default function ComparisonStage({ job, mark, go }) {
+export default function ComparisonStage({ job, mark, go, operator }) {
   const [runs, setRuns] = React.useState([]);
   const [runId, setRunId] = React.useState(null);
   const [gate, setGate] = React.useState(null);
   const [gateForm, setGateForm] = React.useState(null);
-  const [gateApprover, setGateApprover] = React.useState("");
   const [comparison, setComparison] = React.useState(null);
   const [selected, setSelected] = React.useState(null);
-  const [approver, setApprover] = React.useState("");
   const [typed, setTyped] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -92,7 +90,7 @@ export default function ComparisonStage({ job, mark, go }) {
     setError(null);
     try {
       const { approved, approver: _ignored, ...payload } = gateForm;
-      await api.saveGate(job.job_id, { gate: payload, approver: gateApprover.trim() });
+      await api.saveGate(job.job_id, { gate: payload, approver: (operator || "").trim() });
       const refreshed = await api.gate(job.job_id);
       setGate(refreshed);
       setGateForm({ ...refreshed.gate });
@@ -110,7 +108,7 @@ export default function ComparisonStage({ job, mark, go }) {
     try {
       const record = await api.approvePromotion(job.job_id, {
         run_id: runId, candidate_id: selected, decision,
-        approver: approver.trim(), typed_confirmation: typed.trim(), notes,
+        approver: (operator || "").trim(), typed_confirmation: typed.trim(), notes,
       });
       setComparison((current) => ({ ...current, approval: record }));
       if (decision === "APPROVED") mark("approvedRunId", runId);
@@ -224,11 +222,8 @@ export default function ComparisonStage({ job, mark, go }) {
                 <input id="min-segment" type="number" min="10" value={gateForm.min_segment_rows}
                   onChange={(e) => setGateForm((c) => ({ ...c, min_segment_rows: Number(e.target.value) }))} />
               </Field>
-              <Field label="Approved by" htmlFor="gate-approver">
-                <input id="gate-approver" type="text" placeholder="Your name" value={gateApprover}
-                  onChange={(e) => setGateApprover(e.target.value)} />
-              </Field>
             </FormGrid>
+            <ApprovalIdentity operator={operator} what="This promotion gate" />
 
             <div style={{ marginTop: 12 }}>
               <CheckRow checked={gateForm.require_backtest_pass}
@@ -243,7 +238,7 @@ export default function ComparisonStage({ job, mark, go }) {
 
             <ActionRow>
               <Btn onClick={saveGate} busy={busy} busyLabel="Saving…"
-                disabledReason={!gateApprover.trim() ? "Enter an approver name." : undefined}>
+                disabledReason={!operator?.trim() ? "Enter your name in the header first." : undefined}>
                 <MIcon name="how_to_reg" size={15} /> Approve this gate
               </Btn>
             </ActionRow>
@@ -414,11 +409,8 @@ export default function ComparisonStage({ job, mark, go }) {
             </Notice>
           ) : (
             <>
+              <ApprovalIdentity operator={operator} what="This promotion decision" />
               <FormGrid min={200}>
-                <Field label="Approved by" htmlFor="promo-approver">
-                  <input id="promo-approver" type="text" placeholder="Your name" value={approver}
-                    onChange={(e) => setApprover(e.target.value)} />
-                </Field>
                 <Field
                   label="Type the candidate id to confirm" htmlFor="promo-typed"
                   hint={<>Exactly <code>{selected}</code>.</>}
@@ -434,14 +426,14 @@ export default function ComparisonStage({ job, mark, go }) {
               <ActionRow>
                 <Btn variant="ghost" onClick={() => approve("REJECTED")}
                   disabledReason={
-                    !approver.trim() ? "Enter an approver name."
+                    !operator?.trim() ? "Enter your name in the header first."
                       : typed.trim() !== selected ? "Type the candidate id exactly." : undefined
                   }>
                   <MIcon name="block" size={15} /> Record rejection
                 </Btn>
                 <Btn onClick={() => approve("APPROVED")} busy={busy} busyLabel="Recording…"
                   disabledReason={
-                    !approver.trim() ? "Enter an approver name."
+                    !operator?.trim() ? "Enter your name in the header first."
                       : typed.trim() !== selected ? "Type the candidate id exactly."
                       : gateResult?.status === "BLOCKED" ? "This candidate is blocked; resolve the blockers first."
                       : undefined

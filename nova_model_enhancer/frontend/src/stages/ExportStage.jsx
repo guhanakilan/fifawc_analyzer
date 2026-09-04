@@ -2,16 +2,16 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  ActionRow, Badge, Btn, C, Card, CheckList, DropZone, EmptyState, ErrorNotice,
+  ActionRow, ApprovalIdentity, Badge, Btn, C, Card, CheckList, DropZone, EmptyState, ErrorNotice,
   Field, FormGrid, MIcon, MetricGrid, Notice, SectionTitle, SubHeading, Table,
 } from "../nova/Components.jsx";
 import { bytes, num, shortHash, when } from "../format.js";
 import { NoJob } from "./TrainingDataStage.jsx";
 
-export default function ExportStage({ job }) {
+export default function ExportStage({ job, operator }) {
   const [mlTag, setMlTag] = React.useState(null);
   const [form, setForm] = React.useState({
-    column_name: "ml_tag", voice_value: 1, non_voice_value: 0, approver: "", notes: "",
+    column_name: "ml_tag", voice_value: 1, non_voice_value: 0, notes: "",
   });
   const [inventory, setInventory] = React.useState(null);
   const [inventoryFile, setInventoryFile] = React.useState(null);
@@ -77,7 +77,7 @@ export default function ExportStage({ job }) {
         column_name: form.column_name,
         voice_value: Number(form.voice_value),
         non_voice_value: Number(form.non_voice_value),
-        approver: form.approver.trim(),
+        approver: (operator || "").trim(),
         notes: form.notes,
       });
       await refresh();
@@ -177,19 +177,17 @@ export default function ExportStage({ job }) {
                 <input id="tag-column" type="text" value={form.column_name}
                   onChange={(e) => setForm((c) => ({ ...c, column_name: e.target.value }))} />
               </Field>
-              <Field label="Approved by" htmlFor="tag-approver">
-                <input id="tag-approver" type="text" placeholder="Your name" value={form.approver}
-                  onChange={(e) => setForm((c) => ({ ...c, approver: e.target.value }))} />
-              </Field>
               <Field label="Notes" htmlFor="tag-notes">
                 <input id="tag-notes" type="text" value={form.notes}
                   onChange={(e) => setForm((c) => ({ ...c, notes: e.target.value }))} />
               </Field>
             </FormGrid>
 
+            <ApprovalIdentity operator={operator} what="This ml_tag encoding" />
+
             <ActionRow>
               <Btn onClick={approveTag} busy={busy} busyLabel="Saving…"
-                disabledReason={!form.approver.trim() ? "Enter an approver name." : undefined}>
+                disabledReason={!operator?.trim() ? "Enter your name in the header first." : undefined}>
                 <MIcon name="how_to_reg" size={15} /> Confirm this encoding
               </Btn>
             </ActionRow>

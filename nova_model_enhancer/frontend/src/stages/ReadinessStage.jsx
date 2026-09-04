@@ -2,7 +2,7 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  ActionRow, Badge, Btn, C, Card, CheckRow, EmptyState, ErrorNotice, Field,
+  ActionRow, ApprovalIdentity, Badge, Btn, C, Card, CheckRow, EmptyState, ErrorNotice, Field,
   FormGrid, MIcon, MetricGrid, Notice, Pill, SectionTitle, SubHeading, Table,
 } from "../nova/Components.jsx";
 import { num, pct, shortHash, when } from "../format.js";
@@ -10,7 +10,7 @@ import { NoJob } from "./TrainingDataStage.jsx";
 
 const FLAGS = ["Voice", "Non-Voice", "Keyword", "Ignore"];
 
-export default function ReadinessStage({ job, mark, go }) {
+export default function ReadinessStage({ job, mark, go, operator }) {
   const [review, setReview] = React.useState(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState(null);
@@ -55,7 +55,6 @@ export default function ReadinessStage({ job, mark, go }) {
           date_to: saved?.date_to || "",
           allow_unmapped_default: Boolean(saved?.allow_unmapped_default),
           acknowledge_model_output_target: Boolean(saved?.acknowledge_model_output_target),
-          approver: saved?.approver || "",
         });
         const seed = {};
         (reviewBody.subtask_review?.unmapped || []).forEach((row) => {
@@ -111,7 +110,7 @@ export default function ReadinessStage({ job, mark, go }) {
   if (form.target_mode === "derive_from_subtask" && unresolved.length && !form.allow_unmapped_default) {
     blockers.push(`Map ${unresolved.length} new SubTask value(s), or explicitly accept the Non-Voice default.`);
   }
-  if (!form.approver.trim()) blockers.push("Enter the name of the person approving these rules.");
+  if (!operator?.trim()) blockers.push("Enter your name in the header before approving.");
 
   const set = (key, value) => setForm((current) => ({ ...current, [key]: value }));
 
@@ -142,7 +141,7 @@ export default function ReadinessStage({ job, mark, go }) {
           ? null : Number(form.historical_window_days),
         date_from: form.date_from || null,
         date_to: form.date_to || null,
-        approver: form.approver.trim(),
+        approver: operator.trim(),
       });
       const manifest = await api.buildSnapshot(job.job_id);
       setSnapshot(manifest);
@@ -379,13 +378,7 @@ export default function ReadinessStage({ job, mark, go }) {
         )}
 
         <SubHeading>Approval</SubHeading>
-        <Field
-          label="Approved by" htmlFor="approver" style={{ maxWidth: 340 }}
-          hint="Stored with the decisions and written into the dataset manifest."
-        >
-          <input id="approver" type="text" placeholder="Your name" value={form.approver}
-            onChange={(e) => set("approver", e.target.value)} />
-        </Field>
+        <ApprovalIdentity operator={operator} what="These readiness decisions" />
 
         {blockers.length > 0 && (
           <Notice tone="warn" title="Still to decide">

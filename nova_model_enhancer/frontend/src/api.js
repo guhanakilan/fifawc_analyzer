@@ -57,6 +57,9 @@ export const api = {
   overview: () => request("/api/packages/overview"),
   job: (jobId) => request(`/api/packages/jobs/${jobId}`),
   jobProgress: (jobId) => request(`/api/packages/jobs/${jobId}/progress`),
+  operator: (jobId) => request(`/api/packages/jobs/${jobId}/operator`),
+  setOperator: (jobId, name) =>
+    request(`/api/packages/jobs/${jobId}/operator`, json({ name })),
   uploadPackage: (file) => {
     const form = new FormData();
     form.append("file", file);

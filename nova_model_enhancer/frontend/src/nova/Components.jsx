@@ -685,3 +685,23 @@ export const DropZone = ({ accept, label, hint, file, onFile, disabled, id }) =>
     </motion.div>
   );
 };
+
+/* The operator identity, set once in the header. Shown here so it is obvious
+ * whose name goes on this approval, without asking for it a fourth time. */
+export function ApprovalIdentity({ operator, what }) {
+  if (!operator) {
+    return (
+      <Notice tone="warn" title="Enter your name before approving">
+        Approvals are recorded against a person. Type your name in the header — it is used
+        for every approval on this job, and each decision still records it individually.
+      </Notice>
+    );
+  }
+  return (
+    <div style={{ fontSize: 12, color: "var(--nova-grey-dim)", marginBottom: 10 }}>
+      <MIcon name="badge" size={13} /> {what} will be recorded against{" "}
+      <strong style={{ color: "inherit" }}>{operator}</strong>. Change it in the header if
+      that is not you.
+    </div>
+  );
+}

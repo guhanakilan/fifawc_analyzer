@@ -6,6 +6,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+from pydantic import BaseModel
 from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from ..config import MAX_ZIP_BYTES, job_dir
@@ -179,6 +180,35 @@ def compatibility_check(job_id: str, request: CompatibilityRequest):
         result,
     )
     return result
+
+
+class OperatorRequest(BaseModel):
+    name: str
+
+
+@router.get("/jobs/{job_id}/operator")
+def get_operator(job_id: str):
+    """Who is working this job. Set once, reused by every approval."""
+    require_job(job_id)
+    saved = get_decision(job_id, "operator")
+    return {"operator": (saved or {}).get("value", {}).get("name") or ""}
+
+
+@router.post("/jobs/{job_id}/operator")
+def set_operator(job_id: str, request: OperatorRequest):
+    """Record the operator for this job.
+
+    This replaces four separate "type your name" boxes. It changes who has to
+    type, not what is recorded: every decision still stores its own approver and
+    timestamp, so the audit trail is unchanged.
+    """
+    require_job(job_id)
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Enter the name of the person working this job.")
+    set_decision(job_id, "operator", {"name": name}, approver=name)
+    record_audit(job_id, name, "operator.set", f"Operator for this job set to {name}")
+    return {"operator": name}
 
 
 @router.get("/jobs/{job_id}/progress")

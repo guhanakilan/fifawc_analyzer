@@ -2,7 +2,7 @@ import React from "react";
 
 import { api } from "../api.js";
 import {
-  ActionRow, Badge, Btn, C, Card, CheckRow, ErrorNotice, Field, FormGrid,
+  ActionRow, ApprovalIdentity, Badge, Btn, C, Card, CheckRow, ErrorNotice, Field, FormGrid,
   MIcon, MetricGrid, Notice, Pill, ProgressBar, SectionTitle, SubHeading, Table,
 } from "../nova/Components.jsx";
 import { num, pct } from "../format.js";
@@ -31,12 +31,11 @@ const COMPONENTS = [
   },
 ];
 
-export default function WeightStage({ job, mark, go }) {
+export default function WeightStage({ job, mark, go, operator }) {
   const [options, setOptions] = React.useState(null);
   const [strategy, setStrategy] = React.useState(null);
   const [preview, setPreview] = React.useState(null);
   const [approved, setApproved] = React.useState(null);
-  const [approver, setApprover] = React.useState("");
   const [notes, setNotes] = React.useState("");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState(null);
@@ -55,8 +54,7 @@ export default function WeightStage({ job, mark, go }) {
         );
         if (body.approved_strategy) {
           setApproved(body.approved_strategy);
-          setApprover(body.approved_by || "");
-          mark("weightsApproved", true);
+                    mark("weightsApproved", true);
         }
       })
       .catch((err) => live && setLoadError(err));
@@ -101,7 +99,7 @@ export default function WeightStage({ job, mark, go }) {
     setError(null);
     try {
       const result = await api.approveWeights(job.job_id, {
-        strategy, approver: approver.trim(), notes,
+        strategy, approver: (operator || "").trim(), notes,
       });
       setApproved(result);
       setPreview(null);
@@ -338,25 +336,22 @@ export default function WeightStage({ job, mark, go }) {
           {!approved ? (
             <>
               <SubHeading>Approval</SubHeading>
+              <ApprovalIdentity operator={operator} what="This weight strategy" />
               <FormGrid>
-                <Field label="Approved by" htmlFor="weight-approver">
-                  <input id="weight-approver" type="text" placeholder="Your name" value={approver}
-                    onChange={(e) => setApprover(e.target.value)} />
-                </Field>
                 <Field label="Notes (optional)" htmlFor="weight-notes">
                   <input id="weight-notes" type="text" value={notes} onChange={(e) => setNotes(e.target.value)} />
                 </Field>
               </FormGrid>
               <ActionRow note="The exact formula and your name are stored with the run and written into the export.">
                 <Btn onClick={approve} busy={busy} busyLabel="Saving…"
-                  disabledReason={!approver.trim() ? "Enter an approver name." : undefined}>
+                  disabledReason={!operator?.trim() ? "Enter your name in the header first." : undefined}>
                   <MIcon name="how_to_reg" size={15} /> Approve this strategy
                 </Btn>
               </ActionRow>
             </>
           ) : (
             <>
-              <Notice tone="ok" title={`Approved by ${approved.approver || approver}`}>
+              <Notice tone="ok" title={`Approved by ${approved.approver || operator}`}>
                 <code>{approved.formula}</code>
               </Notice>
               <ActionRow>

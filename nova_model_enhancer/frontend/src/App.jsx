@@ -88,6 +88,10 @@ function Workbench() {
   const [progress, setProgress] = React.useState({});
   const [restoring, setRestoring] = React.useState(true);
   const [restoreError, setRestoreError] = React.useState(null);
+  // One operator identity per job, replacing four separate "type your name"
+  // boxes. Each decision still records its own approver, so the audit trail is
+  // unchanged — this only changes who has to type, and how often.
+  const [operator, setOperatorState] = React.useState("");
 
   const mark = React.useCallback((key, value) => {
     setProgress((current) => ({ ...current, [key]: value }));
@@ -97,9 +101,24 @@ function Workbench() {
    *
    * Reachability must survive a refresh: deriving it only from stages this
    * browser happened to visit re-locks work the user already finished. */
+  const saveOperator = React.useCallback(async (jobId, name) => {
+    const trimmed = (name || "").trim();
+    if (!trimmed) return;
+    setOperatorState(trimmed);
+    try {
+      await api.setOperator(jobId, trimmed);
+    } catch {
+      /* the name is still usable in this session even if it did not persist */
+    }
+  }, []);
+
   const syncProgress = React.useCallback(async (jobId) => {
     try {
-      const state = await api.jobProgress(jobId);
+      const [state, who] = await Promise.all([
+        api.jobProgress(jobId),
+        api.operator(jobId).catch(() => ({ operator: "" })),
+      ]);
+      setOperatorState(who.operator || "");
       setProgress({
         dataUploaded: state.data_uploaded,
         snapshotId: state.snapshot_id,
@@ -217,6 +236,8 @@ function Workbench() {
   const definition = STAGES.find((s) => s.id === stage) || STAGES[0];
   const stageProps = {
     job, setJob, progress, mark, go: setStage,
+    operator,
+    setOperator: (name) => job && saveOperator(job.job_id, name),
     refreshProgress: () => job && syncProgress(job.job_id),
   };
 
@@ -233,6 +254,8 @@ function Workbench() {
         stage={stage === HOME ? HOME_DEFINITION : definition}
         job={stage === HOME ? null : job}
         health={health}
+        operator={stage === HOME ? null : operator}
+        onOperator={(name) => job && saveOperator(job.job_id, name)}
         onStartOver={stage !== HOME && job ? startOver : null}
       />
 
@@ -426,7 +449,7 @@ function Sidebar({ active, furthest, onNav, onHome, version }) {
 
 // ── Header ───────────────────────────────────────────────────────────────────
 
-function Header({ stage, job, health, onStartOver }) {
+function Header({ stage, job, health, operator, onOperator, onStartOver }) {
   const { theme, toggle } = useTheme();
   const isDark = theme === "dark";
 
@@ -487,6 +510,7 @@ function Header({ stage, job, health, onStartOver }) {
             )}
           </>
         )}
+        {job && <OperatorChip operator={operator} onOperator={onOperator} chipStyle={chip} />}
         {onStartOver && (
           <Btn variant="ghost" small onClick={onStartOver}>
             <MIcon name="restart_alt" size={14} /> New job
@@ -556,5 +580,63 @@ function StageBanner({ definition }) {
         </p>
       </div>
     </div>
+  );
+}
+
+/* Who is working this job. Set once here and reused by every approval, instead
+ * of four separate "type your name" boxes across four stages. Each decision
+ * still records its own approver and timestamp, so nothing is lost from the
+ * audit trail — only the retyping. */
+function OperatorChip({ operator, onOperator, chipStyle }) {
+  const [editing, setEditing] = React.useState(false);
+  const [draft, setDraft] = React.useState(operator || "");
+
+  React.useEffect(() => setDraft(operator || ""), [operator]);
+
+  const commit = () => {
+    const trimmed = draft.trim();
+    if (trimmed) onOperator(trimmed);
+    setEditing(false);
+  };
+
+  if (editing || !operator) {
+    return (
+      <input
+        autoFocus={editing}
+        type="text"
+        aria-label="Your name, used for every approval on this job"
+        placeholder="Your name"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") {
+            setDraft(operator || "");
+            setEditing(false);
+          }
+        }}
+        style={{
+          ...chipStyle,
+          width: 130,
+          background: "var(--nova-input-bg)",
+          border: "1px solid var(--nova-input-border)",
+          color: "var(--nova-input-text)",
+          padding: "3px 8px",
+        }}
+      />
+    );
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={() => setEditing(true)}
+      title="Approvals on this job are recorded under this name. Click to change."
+      style={{ ...chipStyle, cursor: "pointer", background: "transparent" }}
+    >
+      <MIcon name="badge" size={12} />
+      {operator}
+    </button>
   );
 }
