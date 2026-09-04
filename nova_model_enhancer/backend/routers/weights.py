@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 
 from ..database import get_decision, record_audit, set_decision, update_job
 from ..schemas import WeightApprovalRequest, WeightPreviewRequest
-from ..services import snapshot as snapshot_service, weighting
+from ..services import snapshot as snapshot_service, weight_advisor, weighting
 from ..services.nova_transform import TARGET
 from .packages import require_job
 from .readiness import _job_paths
@@ -37,8 +37,26 @@ def options(job_id: str):
         c for c in df.columns
         if any(token in norm_col(c) for token in ("correct", "verified", "override", "error", "misclass"))
     ]
+    # Proposal derived from this snapshot rather than a single static default.
+    dates = pd.to_datetime(df[manifest["date_column"]], errors="coerce")
+    facts = weight_advisor.measure(
+        df, dates, df[TARGET].astype(int), weight_advisor.DEFAULT_THRESHOLDS
+    )
+    advice = weight_advisor.propose(facts)
+
     saved = get_decision(job_id, "weight_strategy")
     return {
+        "advice": advice,
+        "dimensions": {
+            "client": facts.get("client_column"),
+            "secondary": facts.get("secondary_column"),
+            "note": (
+                "A NoVA export's manifest carries only placement_id — there is no client "
+                "field in the package. FacilityName is treated as the client dimension and "
+                "PayerName as a secondary one when present; the rules fall back to placement "
+                "and measured data characteristics when neither exists."
+            ),
+        },
         "proposed_defaults": weighting.PROPOSED_DEFAULTS,
         "proposed_note": (
             "These values come from the project brief and are proposals only. "

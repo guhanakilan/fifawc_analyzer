@@ -49,7 +49,10 @@ export default function WeightStage({ job, mark, go }) {
       .then((body) => {
         if (!live) return;
         setOptions(body);
-        setStrategy(body.approved_strategy?.strategy || structuredClone(body.proposed_defaults));
+        setStrategy(
+          body.approved_strategy?.strategy
+          || structuredClone(body.advice?.strategy || body.proposed_defaults)
+        );
         if (body.approved_strategy) {
           setApproved(body.approved_strategy);
           setApprover(body.approved_by || "");
@@ -125,6 +128,10 @@ export default function WeightStage({ job, mark, go }) {
           {options.proposed_note} Every component is multiplied onto a base of 1.0 and the product is
           capped, so several components firing on one row cannot compound without limit.
         </Notice>
+
+        {options.advice && (
+          <WeightAdvice advice={options.advice} dimensions={options.dimensions} />
+        )}
 
         <CheckRow
           checked={strategy.enabled}
@@ -362,5 +369,82 @@ export default function WeightStage({ job, mark, go }) {
         </Card>
       )}
     </>
+  );
+}
+
+/* ── Weighting proposal ────────────────────────────────────────────────────
+ *
+ * Derived from this snapshot's own characteristics rather than a single static
+ * default, and every component states why it is on or off so the proposal can
+ * be argued with. "No weighting" is a legitimate recommendation, not a failure
+ * to produce one.
+ */
+
+function WeightAdvice({ advice, dimensions }) {
+  const [open, setOpen] = React.useState(false);
+  const facts = advice.facts || {};
+
+  return (
+    <Card>
+      <SectionTitle
+        sub={advice.why}
+        right={
+          <>
+            <Pill tone={advice.recommend_weighting ? "ok" : "muted"}>{advice.headline}</Pill>
+            <Btn variant="ghost" small onClick={() => setOpen((v) => !v)}>
+              <MIcon name={open ? "expand_less" : "expand_more"} size={14} />{" "}
+              {open ? "Hide reasoning" : "Why"}
+            </Btn>
+          </>
+        }
+      >
+        Proposed for this data
+      </SectionTitle>
+
+      <MetricGrid
+        compact
+        min={140}
+        items={[
+          { label: "Rows", value: num(facts.rows) },
+          { label: "Span", value: facts.span_days != null ? `${num(facts.span_days)}d` : "—" },
+          { label: "Majority class", value: facts.majority_class_pct != null ? `${facts.majority_class_pct}%` : "—" },
+          {
+            label: "Balance drift",
+            value: facts.balance_drift_pts != null ? `${facts.balance_drift_pts} pts` : "—",
+          },
+          {
+            label: "Rarest SubTask",
+            value: facts.rarest_subtask_pct != null ? `${facts.rarest_subtask_pct}%` : "—",
+          },
+        ]}
+      />
+
+      {open && (
+        <Table
+          columns={[
+            { key: "component", header: "Component" },
+            {
+              key: "enabled",
+              header: "Proposed",
+              render: (row) => (
+                <Pill tone={row.enabled ? "ok" : "muted"}>{row.enabled ? "on" : "off"}</Pill>
+              ),
+            },
+            { key: "why", header: "Why" },
+          ]}
+          rows={advice.reasons || []}
+          rowKey={(row) => row.component}
+          empty="No components evaluated."
+        />
+      )}
+
+      {dimensions && (
+        <div style={{ marginTop: 10, fontSize: 11.5, color: "var(--nova-grey-dim)" }}>
+          Client dimension: <strong>{dimensions.client || "none detected"}</strong>
+          {dimensions.secondary ? <> · secondary: <strong>{dimensions.secondary}</strong></> : null}
+          <div style={{ marginTop: 3 }}>{dimensions.note}</div>
+        </div>
+      )}
+    </Card>
   );
 }
