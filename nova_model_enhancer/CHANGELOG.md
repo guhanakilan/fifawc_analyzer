@@ -1,5 +1,103 @@
 # Changelog
 
+## 1.2.0 — ten corrections and enhancements
+
+Each item below was agreed before implementation, and each was verified against the real
+PLC984 export rather than only against fixtures.
+
+### 1. Resumable runs and a jobs home screen
+
+Candidates now checkpoint as they finish, so a run interrupted by a restart resumes and
+retrains only what is missing. Resume is explicit — nothing heavy starts on its own when
+the backend boots. A new home screen lists every saved job with its runs, models and
+counts, and reopens one at the stage it reached. Nothing here is destructive: leaving a
+job clears only this browser's pointer to it.
+
+### 2. Four-layer column lineage
+
+Drift is now traced through all four column lists a package carries — mapped, matched,
+selected, fitted — so the point at which a column left the pipeline is visible. Testing
+against the real export exposed two false alarms the old flat comparison would have
+produced: `dosage_days` is *derived*, not uploaded, and `DOSFrom` / `UpdatedDateTimeGMT`
+are required precisely because they are what it is derived from, despite not being
+features. Between matched and selected the export records no reason, so those columns are
+reported as dropped during the build with that limitation stated rather than guessed at.
+
+### 3. Dark-mode logo and bundled fonts
+
+The brand mark drew a hard-coded white plate behind its dots, which showed as a bright box
+in dark mode. Removed. DM Sans and DM Mono are now served from the application itself
+(101 KB, SIL Open Font Licence, licence text bundled) rather than the Google Fonts CDN —
+offline, or behind a proxy, the two families were falling back to different substitutes,
+which is what read as inconsistent typography. The stacks were declared 22 times over in
+two spellings; they are now one pair of CSS variables.
+
+### 4. Configurable rules engine for Stage 3
+
+Recommendations for the date column, label source, dedup key, historical window and
+SubTask mappings, each carrying the rule that produced it and the evidence behind it.
+Interventions — four blocking, four warning — with every threshold stored per job and
+changeable without a code change. Optional local models (embeddings, and a small local
+LLM for written rationales) refine the suggestions when installed and degrade to the rules
+when not; neither can block a run, and generation is pinned to temperature 0 so an
+explanation can be reviewed.
+
+### 5. Explicit training window
+
+From/to date pickers over the approved date column, opening on the data's real span, with
+a live preview of the rows kept, the resulting span and the class balance. A date-only
+upper bound includes the whole of that day; an empty window fails loudly rather than
+freezing an empty dataset; the older days-back setting still works untouched.
+
+### 6. Weighting proposed from the data
+
+The advisor measures the frozen snapshot — balance, span, recency, flag columns, rarest
+SubTask — and proposes a strategy with a reason for each component, on or off. Below
+2,000 rows or 90 days it recommends no weighting at all. A NoVA export carries no client
+field, so `FacilityName` is treated as the client dimension and `PayerName` as a secondary
+one when present, with a fallback to placement plus measured characteristics.
+
+### 7. Performance
+
+The backtest now runs 4 windows instead of 8 and fits its preprocessing once per window
+rather than once per model: 5.8s to 1.9s. It is also opt-in and off by default, taking a
+standard run from ~35s to ~29.7s. Parallel candidate training was implemented, measured
+and left off — on 4 cores it is no faster (30.0s) and splitting cores two ways is markedly
+slower (38.6s), because the tree models already parallelise internally. It remains
+available as `max_parallel_candidates` for a machine with more cores than one fit can use.
+A skipped backtest is now reported as "not assessed" rather than falling through the gate
+silently.
+
+### 8. Model comparison
+
+Added McNemar significance testing and bootstrap confidence intervals; operating-point
+metrics (precision at a target recall, recall at a target precision, top-decile lift); a
+cost-weighted view at the approved 3:1 missed-Voice ratio; and a disagreement analysis
+with a per-segment win/loss table. Plus a guidance panel suggesting concrete next actions
+from the run's own evidence — never a recommendation to promote.
+
+On the verification run these change the reading entirely: the challenger's higher F1
+comes from 136 disagreements split 73/63 at p = 0.44, it costs *more* than the champion
+(660 against 618, from 187 missed-Voice errors against 161), and it is worse on three of
+six segments including the largest.
+
+### 9. Threshold scale floored at 0.50
+
+The grid is 0.50 to 0.90 in steps of 0.05, enforced identically in the optimiser's sweep,
+the UI control and the API's validation — a test asserts the three cannot drift apart. The
+champion keeps its real threshold even when that is below the floor, because reporting it
+at any other value would describe a model that is not in production. A new read-only
+rescore endpoint backs a threshold control that did not previously exist.
+
+### 10. One operator identity
+
+Four separate "type your name" boxes across Stages 3, 4, 6 and 7 are now one identity set
+once per job in the header. Every decision still records its own approver and timestamp,
+so the audit trail is unchanged. The substantive gates all remain: the local-trust
+acknowledgement before any pickle is loaded, the two conditional acknowledgements that
+appear only when the risk is present, and the typed promotion confirmation.
+
+
 ## 1.1.0 — workbench UI parity and correctness fixes
 
 ### UI rebuilt against the reference workbench
