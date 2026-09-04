@@ -1,0 +1,160 @@
+/* ── NoVA theme tokens ────────────────────────────────────────────────────
+   Adapted from the reference application's nova-theme.css so the enhancer
+   uses the same surfaces, borders and elevation in both light and dark.
+   Component geometry lives in src/nova/Components.jsx, matching how the
+   reference application styles its own components. */
+
+/* The two type stacks, declared once. Both families are bundled with the app
+   (public/fonts), so the fallbacks are a genuine last resort rather than the
+   usual result of a blocked CDN. Everything else references these. */
+:root {
+  --nova-font-sans: "DM Sans", system-ui, "Segoe UI", Roboto, sans-serif;
+  --nova-font-mono: "DM Mono", ui-monospace, "Cascadia Mono", "Consolas", monospace;
+}
+
+:root,
+[data-theme="light"] {
+  --nova-sidebar-bg: #f7f8fc;
+  --nova-sidebar-border: #d8dcf0;
+  --nova-sidebar-logo-text: #0f1623;
+  --nova-sidebar-text-dim: #3d4a5c;
+  --nova-sidebar-icon-inactive-bg: #eceef8;
+  --nova-sidebar-icon-inactive-cl: #2c356b;
+  --nova-sidebar-text-completed: #415395;
+  --nova-sidebar-text-default: #1a2035;
+
+  --nova-header-bg: #ffffff;
+  --nova-header-border: #d8dcf0;
+  --nova-header-text: #0f1623;
+  --nova-header-text-dim: #2c356b;
+
+  --nova-view-bg: #f0f2fa;
+  --nova-toggle-bg: #eceef8;
+  --nova-toggle-border: #d8dcf0;
+  --nova-toggle-color: #1a2035;
+
+  --nova-hero-bg: linear-gradient(135deg, #eceef8 0%, #e4e8f8 100%);
+  --nova-hero-border: #c8cff0;
+  --nova-hero-title: #0f1623;
+  --nova-hero-sub: #2c356b;
+
+  --nova-grey-dim: #4b5563;
+  --nova-text-mid: #374151;
+
+  --nova-input-bg: #ffffff;
+  --nova-input-border: #c8cee2;
+  --nova-input-text: #1e2233;
+
+  --nova-card-shadow: 0 1px 4px rgba(44, 53, 107, 0.08), 0 4px 16px rgba(44, 53, 107, 0.08);
+  --nova-transition: background 0.2s ease, color 0.15s ease, border-color 0.15s ease;
+  --nova-focus: #3b5bdb;
+  color-scheme: light;
+}
+
+[data-theme="dark"] {
+  --nova-sidebar-bg: #28293d;
+  --nova-sidebar-border: #32334a;
+  --nova-sidebar-logo-text: #ffffff;
+  --nova-sidebar-text-dim: #8892a0;
+  --nova-sidebar-icon-inactive-bg: #32334a;
+  --nova-sidebar-icon-inactive-cl: #8892a0;
+  --nova-sidebar-text-completed: #98dab6;
+  --nova-sidebar-text-default: #cbd5e1;
+
+  --nova-header-bg: #1e1f30;
+  --nova-header-border: #32334a;
+  --nova-header-text: #ffffff;
+  --nova-header-text-dim: #8892a0;
+
+  --nova-view-bg: #0f1117;
+  --nova-toggle-bg: #32334a;
+  --nova-toggle-border: #3d3e56;
+  --nova-toggle-color: #c1c8d0;
+
+  --nova-hero-bg: linear-gradient(135deg, #28293d 0%, #1e2040 100%);
+  --nova-hero-border: #32334a;
+  --nova-hero-title: #ffffff;
+  --nova-hero-sub: #94a3b8;
+
+  --nova-grey-dim: #8892a0;
+  --nova-text-mid: #b9c0d4;
+
+  --nova-input-bg: #14151f;
+  --nova-input-border: #3a3d55;
+  --nova-input-text: #e6e9f2;
+
+  --nova-card-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --nova-focus: #98dab6;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--nova-view-bg);
+  color: var(--nova-text-mid);
+  font-family: var(--nova-font-sans);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: var(--nova-transition);
+}
+
+h1, h2, h3 { color: var(--nova-header-text); }
+
+button, input, select, textarea { font-family: inherit; }
+
+:focus-visible {
+  outline: 2px solid var(--nova-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Form controls — the reference styles these inline per call site; a single
+   rule here keeps every input in the enhancer consistent instead. */
+input[type="text"],
+input[type="number"],
+input[type="password"],
+select,
+textarea {
+  background: var(--nova-input-bg);
+  border: 1px solid var(--nova-input-border);
+  color: var(--nova-input-text);
+  border-radius: 6px;
+  padding: 7px 9px;
+  font-size: 12.5px;
+  width: 100%;
+}
+select[multiple] { padding: 4px; }
+textarea { min-height: 62px; resize: vertical; }
+input:disabled, select:disabled, textarea:disabled { opacity: 0.55; cursor: not-allowed; }
+
+code {
+  font-family: var(--nova-font-mono);
+  font-size: 0.94em;
+}
+
+pre.nova-log {
+  background: var(--nova-input-bg);
+  border: 1px solid var(--nova-input-border);
+  border-radius: 8px;
+  padding: 11px 13px;
+  max-height: 280px;
+  overflow: auto;
+  font-family: var(--nova-font-mono);
+  font-size: 10.5px;
+  color: var(--nova-grey-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+}
+
+@media (max-width: 900px) {
+  nav[aria-label="Retraining stages"] { display: none; }
+  main { margin-left: 0 !important; }
+  div[style*="left: 240px"] { left: 0 !important; }
+}
