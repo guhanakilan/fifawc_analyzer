@@ -119,6 +119,15 @@ class TrainingRequest(BaseModel):
     # candidates measured slower, not faster. Raise it only on a box with
     # more cores than one model fit can use.
     max_parallel_candidates: int = 1
+    # Escalating retrain loop. Off by default: it multiplies training time, and
+    # a target the data cannot support should be a deliberate ask.
+    autotune: bool = False
+    autotune_target_metric: Literal["f1", "precision", "recall", "auc"] = "f1"
+    autotune_target_value: float | None = None
+    autotune_max_rounds: int = 8
+    autotune_time_budget_seconds: float | None = 300.0
+    autotune_patience: int = 3
+    autotune_class_balance: bool | None = None
     run_backtest: bool = False
     backtest_windows: int | None = None
     threshold_criterion: Literal["f1", "recall", "precision", "balanced_accuracy", "weighted_composite"] = "f1"

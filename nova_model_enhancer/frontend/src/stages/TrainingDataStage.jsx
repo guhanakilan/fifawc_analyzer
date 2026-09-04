@@ -3,7 +3,7 @@ import React from "react";
 import { api } from "../api.js";
 import {
   ActionRow, Badge, Btn, C, Card, DropZone, EmptyState, ErrorNotice, Field,
-  FormGrid, MIcon, MetricGrid, Notice, SectionTitle, SubHeading, Table,
+  FormGrid, MIcon, MetricGrid, Notice, Pill, SectionTitle, SubHeading, Table,
 } from "../nova/Components.jsx";
 import { num, shortHash, when } from "../format.js";
 
@@ -111,6 +111,8 @@ export default function TrainingDataStage({ job, mark, go }) {
         </ActionRow>
         <ErrorNotice error={error} title="The file could not be used" />
       </Card>
+
+      <SqlSource job={job} onPulled={refresh} />
 
       <Card>
         <SectionTitle
@@ -255,6 +257,123 @@ export function NoJob() {
         No active job
       </SectionTitle>
       <EmptyState icon="inventory_2">This stage needs a champion package to work against.</EmptyState>
+    </Card>
+  );
+}
+
+/* ── Optional SQL Server source ────────────────────────────────────────────
+ *
+ * Pull a date range of recent rows straight into this job. Entirely optional:
+ * with no driver or no configured source this card says so and gets out of the
+ * way — file upload above is the supported path either way.
+ */
+
+function SqlSource({ job, onPulled }) {
+  const [status, setStatus] = React.useState(null);
+  const [source, setSource] = React.useState("");
+  const [from, setFrom] = React.useState("");
+  const [to, setTo] = React.useState("");
+  const [role, setRole] = React.useState("combined");
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState(null);
+  const [pulled, setPulled] = React.useState(null);
+
+  React.useEffect(() => {
+    api.sqlStatus().then((body) => {
+      setStatus(body);
+      if (body.sources?.length) setSource(body.sources[0].name);
+    }).catch(() => setStatus(null));
+  }, []);
+
+  if (!status) return null;
+
+  const usable = status.driver_available && status.sources.length > 0;
+
+  const pull = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const body = await api.sqlPull(job.job_id, {
+        source, date_from: from || null, date_to: to || null, role,
+      });
+      setPulled(body);
+      onPulled();
+    } catch (pullError) {
+      setError(pullError);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card>
+      <SectionTitle
+        sub="Pull a date range of recent rows directly from a configured SQL Server view."
+        right={<Pill tone={usable ? "ok" : "muted"}>{usable ? "available" : "not configured"}</Pill>}
+      >
+        Recent data from SQL Server
+      </SectionTitle>
+
+      {!status.driver_available && (
+        <Notice tone="info" title="The SQL driver is not installed">
+          {status.driver_detail}
+        </Notice>
+      )}
+      {status.driver_available && status.sources.length === 0 && (
+        <Notice tone="info" title="No source is configured">
+          Add one to <code>{status.config_path}</code> — a server, database, view and date
+          column. Connections use your Windows account, so there is no password to store.
+        </Notice>
+      )}
+      {status.config_error && (
+        <Notice tone="warn" title="The source configuration could not be read">
+          {status.config_error}
+        </Notice>
+      )}
+
+      {usable && (
+        <>
+          <FormGrid>
+            <Field label="Source" htmlFor="sql-source">
+              <select id="sql-source" value={source} onChange={(e) => setSource(e.target.value)}>
+                {status.sources.map((s) => (
+                  <option key={s.name} value={s.name}>
+                    {s.name} — {s.database}.{s.table}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Role" htmlFor="sql-role">
+              <select id="sql-role" value={role} onChange={(e) => setRole(e.target.value)}>
+                <option value="combined">combined</option>
+                <option value="historical">historical</option>
+                <option value="new">new</option>
+              </select>
+            </Field>
+            <Field label="From" htmlFor="sql-from" hint="Leave empty for the earliest row.">
+              <input id="sql-from" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+            </Field>
+            <Field label="To" htmlFor="sql-to" hint="Inclusive of the whole day.">
+              <input id="sql-to" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </Field>
+          </FormGrid>
+
+          <ActionRow note="Read-only: a SELECT over the configured view, with the dates bound as parameters. Every pull is recorded in the audit trail.">
+            <Btn onClick={pull} busy={busy} busyLabel="Pulling…">
+              <MIcon name="download" size={15} /> Pull into this job
+            </Btn>
+          </ActionRow>
+
+          <ErrorNotice error={error} title="The pull did not succeed" />
+
+          {pulled && (
+            <Notice tone="ok" title={`${num(pulled.rows_count)} rows pulled`}>
+              {pulled.original_filename} — {num(pulled.columns_count)} columns, from{" "}
+              {pulled.source?.database}.{pulled.source?.table} as your Windows account.
+            </Notice>
+          )}
+        </>
+      )}
     </Card>
   );
 }

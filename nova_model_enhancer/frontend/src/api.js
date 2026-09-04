@@ -75,6 +75,8 @@ export const api = {
     form.append("role", role);
     return request(`/api/training-data/${jobId}/upload`, { method: "POST", body: form });
   },
+  sqlStatus: () => request("/api/training-data/sql/status"),
+  sqlPull: (jobId, payload) => request(`/api/training-data/${jobId}/sql-pull`, json(payload)),
   removeTrainingData: (jobId, assetId) =>
     request(`/api/training-data/${jobId}/${assetId}`, { method: "DELETE" }),
 

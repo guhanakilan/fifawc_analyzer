@@ -28,6 +28,8 @@ export default function TrainingStage({ job, mark, go }) {
     n_trials: 20, timeout_seconds: "", n_jobs: -1, seed: 42,
     include_baseline: true, run_backtest: false, backtest_windows: "",
     threshold_criterion: "f1", second_family: "",
+    autotune: false, autotune_target_metric: "f1", autotune_target_value: "",
+    autotune_max_rounds: 8, autotune_time_budget_seconds: 300, autotune_patience: 3,
   });
 
   const loadRuns = React.useCallback(async () => {
@@ -119,6 +121,13 @@ export default function TrainingStage({ job, mark, go }) {
         seed: Number(config.seed),
         second_family: config.second_family || null,
         include_baseline: config.include_baseline,
+        autotune: config.autotune,
+        autotune_target_metric: config.autotune_target_metric,
+        autotune_target_value: config.autotune_target_value === ""
+          ? null : Number(config.autotune_target_value),
+        autotune_max_rounds: Number(config.autotune_max_rounds),
+        autotune_time_budget_seconds: Number(config.autotune_time_budget_seconds),
+        autotune_patience: Number(config.autotune_patience),
         run_backtest: config.run_backtest,
         backtest_windows: config.backtest_windows === "" ? null : Number(config.backtest_windows),
         threshold_criterion: config.threshold_criterion,
@@ -278,6 +287,58 @@ export default function TrainingStage({ job, mark, go }) {
             onChange={(value) => set("include_baseline", value)}>
             Include a logistic-regression baseline, so "better than the champion" has a floor to sit above.
           </CheckRow>
+          <CheckRow checked={config.autotune} disabled={running}
+            onChange={(value) => set("autotune", value)}>
+            Keep retraining the champion's own family with more capacity until the target is
+            met. Every round is scored on the validation split — the test split is read once,
+            afterwards, so the reported figure stays an honest estimate rather than a measure
+            of how long the search ran.
+          </CheckRow>
+
+          {config.autotune && (
+            <FormGrid min={190}>
+              <Field label="Target metric" htmlFor="at-metric">
+                <select id="at-metric" value={config.autotune_target_metric} disabled={running}
+                  onChange={(e) => set("autotune_target_metric", e.target.value)}>
+                  <option value="f1">F1</option>
+                  <option value="precision">Precision</option>
+                  <option value="recall">Recall</option>
+                  <option value="auc">AUC</option>
+                </select>
+              </Field>
+              <Field
+                label="Target value" htmlFor="at-target"
+                hint="Leave empty to simply take the best round found."
+              >
+                <input id="at-target" type="number" min="0" max="1" step="0.01" disabled={running}
+                  placeholder="e.g. 0.78"
+                  value={config.autotune_target_value}
+                  onChange={(e) => set("autotune_target_value", e.target.value)} />
+              </Field>
+              <Field label="Maximum rounds" htmlFor="at-rounds">
+                <input id="at-rounds" type="number" min="1" max="30" disabled={running}
+                  value={config.autotune_max_rounds}
+                  onChange={(e) => set("autotune_max_rounds", e.target.value)} />
+              </Field>
+              <Field
+                label="Time budget (seconds)" htmlFor="at-budget"
+                hint="The loop stops here even if the target is unmet."
+              >
+                <input id="at-budget" type="number" min="30" step="30" disabled={running}
+                  value={config.autotune_time_budget_seconds}
+                  onChange={(e) => set("autotune_time_budget_seconds", e.target.value)} />
+              </Field>
+              <Field
+                label="Stop after N flat rounds" htmlFor="at-patience"
+                hint="Catches the case where the data, not the search, is the ceiling."
+              >
+                <input id="at-patience" type="number" min="1" max="10" disabled={running}
+                  value={config.autotune_patience}
+                  onChange={(e) => set("autotune_patience", e.target.value)} />
+              </Field>
+            </FormGrid>
+          )}
+
           <CheckRow checked={config.run_backtest} disabled={running}
             onChange={(value) => set("run_backtest", value)}>
             Run a rolling-origin backtest for stability over time. Off by default because it

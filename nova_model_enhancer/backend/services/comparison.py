@@ -128,6 +128,10 @@ def build_comparison(
             "feature_importance": record.get("feature_importance"),
             "best_params": record.get("best_params"),
             "train_time_seconds": record.get("train_time_seconds"),
+            # The escalation loop's outcome belongs on the comparison screen:
+            # whether the target was actually reached, and that the search never
+            # read the test split, are facts needed to judge these metrics.
+            "autotune": record.get("autotune"),
         }
         # Item 8: is the difference real, how does it operate, what does it cost,
         # and where exactly does it differ from the champion?

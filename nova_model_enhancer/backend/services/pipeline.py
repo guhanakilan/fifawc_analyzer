@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 
 from . import champion as champion_service
-from . import evaluator, snapshot as snapshot_service, trainer, weighting
+from . import autotune, evaluator, snapshot as snapshot_service, trainer, weighting
 from .nova_transform import (
     TARGET,
     NovaConfigs,
@@ -503,6 +503,91 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
     if not trained:
         raise PipelineError("No candidate finished training — see the task log for the reason.")
 
+    # ── Escalating retrain loop ─────────────────────────────────────────────
+    #
+    # Optional. Grows the champion's own family — more trees, deeper or wider,
+    # with the regularisation that lets the extra capacity pay off — until the
+    # target is met or the data says no. Scored on validation throughout: the
+    # test split is read once, afterwards, for the winner only.
+    autotune_result = None
+    if settings.get("autotune") and champion_bench.get("model_family") in autotune.ESCALATION:
+        family = champion_bench["model_family"]
+        context.progress(0.86, f"Escalating {family} towards the target")
+        try:
+            autotune_result = autotune.run(
+                model_type=family,
+                champion_params=settings.get("champion_params"),
+                X_train=matrices["X_train"], y_train=matrices["y_train"],
+                w_train=prepared["weights"]["train"],
+                X_val=matrices["X_val"], y_val=matrices["y_val"],
+                target_metric=settings.get("autotune_target_metric", "f1"),
+                target_value=settings.get("autotune_target_value"),
+                threshold=champion_bench["threshold"],
+                max_rounds=int(settings.get("autotune_max_rounds", 8)),
+                time_budget_seconds=settings.get("autotune_time_budget_seconds", 300.0),
+                patience=int(settings.get("autotune_patience", 3)),
+                balance=settings.get("autotune_class_balance"),
+                seed=int(settings.get("seed", 42)),
+                n_jobs=int(settings.get("n_jobs", -1)),
+                progress=lambda f, m: context.log(m),
+                should_cancel=context.cancelled,
+            )
+        except trainer.TrainingCancelled:
+            raise
+        except autotune.AutotuneError as exc:
+            context.log(f"Escalation loop stopped: {exc}")
+            autotune_result = {"error": str(exc), "completed": False}
+
+        if autotune_result and autotune_result.get("best_params"):
+            candidate_id = f"{family}_escalated"
+            context.log(
+                f"Escalation finished: {autotune_result['stop_reason']} — best validation "
+                f"{autotune_result['target_metric']} {autotune_result['best_score']} at round "
+                f"{autotune_result['best_round']}"
+            )
+            estimator = trainer.make_estimator(
+                family, autotune_result["best_params"],
+                n_jobs=int(settings.get("n_jobs", -1)), seed=int(settings.get("seed", 42)),
+            )
+            fit_kwargs = (
+                {"sample_weight": prepared["weights"]["train"]}
+                if prepared["weights"]["train"] is not None else {}
+            )
+            estimator.fit(matrices["X_train"].values, matrices["y_train"].values, **fit_kwargs)
+            proba_test = trainer._predict_proba(estimator, matrices["X_test"].values)
+            proba_val = trainer._predict_proba(estimator, matrices["X_val"].values)
+
+            model_path = models_dir / f"{candidate_id}.pkl"
+            joblib.dump(estimator, model_path)
+            threshold_analysis = choose_threshold(
+                matrices["y_val"], proba_val, matrices["y_test"], proba_test,
+                champion_bench["threshold"], settings.get("threshold_criterion", "f1"),
+            )
+            result = {
+                "candidate_id": candidate_id,
+                "label": f"{family.upper()} (escalated)",
+                "model_type": family,
+                "mode": "escalated",
+                "model_path": str(model_path.relative_to(run_dir)),
+                "best_params": autotune_result["best_params"],
+                "threshold_analysis": threshold_analysis,
+                "selected_threshold": threshold_analysis["selected_threshold"],
+                "test_metrics": evaluator.metrics_at_threshold(
+                    matrices["y_test"], proba_test, threshold_analysis["selected_threshold"]
+                ),
+                "calibration_curve": evaluator.calibration_curve_points(
+                    matrices["y_test"], proba_test
+                ),
+                "latency": evaluator.measure_latency(
+                    lambda X, est=estimator: trainer._predict_proba(est, X), matrices["X_test"]
+                ),
+                "autotune": {k: v for k, v in autotune_result.items() if k != "history"},
+            }
+            np.save(run_dir / f"proba_test_{candidate_id}.npy", proba_test)
+            challengers[candidate_id] = result
+            write_candidate_checkpoint(run_dir, candidate_id, result)
+            trained[candidate_id] = result
+
     # ── Rolling backtest for stability ──────────────────────────────────────
     backtest: dict = {}
     backtest_requested = bool(settings.get("run_backtest", False))
@@ -561,6 +646,7 @@ def run_retraining(context, job_id: str, settings: dict, paths: dict) -> dict:
         "challengers": challengers,
         "backtest": backtest,
         "backtest_requested": backtest_requested,
+        "autotune": autotune_result,
         "available_model_types": available,
     }
     _atomic_json(run_record, run_dir / "run_results.json")

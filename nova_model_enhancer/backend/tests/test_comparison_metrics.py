@@ -225,3 +225,54 @@ def test_guidance_flags_a_challenger_that_costs_more_despite_better_metrics():
     match = [s for s in suggestions if "costs more" in s["title"]]
     assert match, [s["title"] for s in suggestions]
     assert match[0]["priority"] == "high"
+
+
+# ── The vectorised bootstrap must agree with the scorer it replaced ──────────
+
+@pytest.mark.parametrize("metric", ["f1", "precision", "recall"])
+def test_vectorised_bootstrap_matches_a_scorer_loop(metric):
+    """The fast path is arithmetic, not an approximation.
+
+    bootstrap_interval computes threshold metrics from resampled confusion
+    counts instead of calling sklearn once per resample — 0.76s to 0.015s per
+    model. Same seed, same draws, so the answer must be identical rather than
+    merely close.
+    """
+    from sklearn.metrics import f1_score, precision_score, recall_score
+
+    rng = np.random.default_rng(1)
+    n = 500
+    y = rng.integers(0, 2, n)
+    proba = np.clip(rng.normal(0.5 + 0.2 * (2 * y - 1), 0.25), 0.001, 0.999)
+    threshold, resamples, seed = 0.5, 120, 7
+
+    fast = evaluator.bootstrap_interval(
+        y, proba, threshold, metric=metric, resamples=resamples, seed=seed
+    )
+
+    # The same draws, scored the slow way.
+    scorers = {"f1": f1_score, "precision": precision_score, "recall": recall_score}
+    scorer = scorers[metric]
+    draws = np.random.default_rng(seed).integers(0, n, size=(resamples, n))
+    reference = []
+    for idx in draws:
+        ys = y[idx]
+        if len(np.unique(ys)) < 2:
+            continue
+        reference.append(
+            float(scorer(ys, (proba[idx] >= threshold).astype(int), zero_division=0))
+        )
+
+    assert fast["resamples"] == len(reference)
+    # The returned bounds are rounded to 4 dp, so compare at that resolution.
+    assert fast["low"] == pytest.approx(round(float(np.quantile(reference, 0.025)), 4))
+    assert fast["high"] == pytest.approx(round(float(np.quantile(reference, 0.975)), 4))
+
+
+def test_the_auc_path_still_works():
+    """AUC has no closed form over resampled counts, so it keeps the scorer."""
+    rng = np.random.default_rng(3)
+    y = rng.integers(0, 2, 400)
+    proba = np.clip(rng.normal(0.5 + 0.25 * (2 * y - 1), 0.2), 0.001, 0.999)
+    interval = evaluator.bootstrap_interval(y, proba, 0.5, metric="auc", resamples=60)
+    assert interval["low"] <= interval["point"] <= interval["high"]

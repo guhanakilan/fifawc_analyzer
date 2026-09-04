@@ -405,34 +405,57 @@ def bootstrap_interval(
 
     A point estimate on a few hundred rows carries more uncertainty than its
     four decimal places suggest; this says how much.
-    """
-    from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
 
+    Threshold metrics are computed straight from resampled confusion counts
+    rather than by calling sklearn once per resample. That is the same
+    arithmetic — a test asserts the two agree — but it turns several hundred
+    Python-level scorer calls into a handful of array operations, which took
+    this from 0.76s per model to a few milliseconds. With six models on the
+    comparison screen that was most of a five-second page load.
+    """
     y = np.asarray(y_true).astype(int)
     p = np.asarray(proba, dtype=float)
     n = len(y)
     if n == 0:
         return {"metric": metric, "point": None, "low": None, "high": None, "resamples": 0}
 
-    scorers = {
-        "f1": lambda yt, pr, pb: f1_score(yt, pr, zero_division=0),
-        "precision": lambda yt, pr, pb: precision_score(yt, pr, zero_division=0),
-        "recall": lambda yt, pr, pb: recall_score(yt, pr, zero_division=0),
-        "auc": lambda yt, pr, pb: roc_auc_score(yt, pb) if len(np.unique(yt)) > 1 else np.nan,
-    }
-    score = scorers.get(metric, scorers["f1"])
-
     rng = np.random.default_rng(seed)
-    point = float(score(y, (p >= threshold).astype(int), p))
-    samples = []
-    for _ in range(resamples):
-        idx = rng.integers(0, n, n)
-        ys, ps = y[idx], p[idx]
-        if len(np.unique(ys)) < 2:
-            continue
-        value = score(ys, (ps >= threshold).astype(int), ps)
-        if not np.isnan(value):
-            samples.append(float(value))
+    point = float(_metric_value(y, p, threshold, metric))
+
+    if metric == "auc":
+        # No closed form over resampled counts; fall back to the scorer.
+        samples = []
+        for _ in range(resamples):
+            idx = rng.integers(0, n, n)
+            if len(np.unique(y[idx])) < 2:
+                continue
+            samples.append(float(_metric_value(y[idx], p[idx], threshold, "auc")))
+    else:
+        pred = (p >= threshold).astype(np.int8)
+        actual_pos = y == 1
+        pred_pos = pred == 1
+
+        # One (resamples x n) draw, then the counts every threshold metric needs.
+        idx = rng.integers(0, n, size=(resamples, n))
+        tp = np.count_nonzero(actual_pos[idx] & pred_pos[idx], axis=1)
+        fp = np.count_nonzero(~actual_pos[idx] & pred_pos[idx], axis=1)
+        fn = np.count_nonzero(actual_pos[idx] & ~pred_pos[idx], axis=1)
+
+        with np.errstate(divide="ignore", invalid="ignore"):
+            precision = np.where(tp + fp > 0, tp / (tp + fp), 0.0)
+            recall = np.where(tp + fn > 0, tp / (tp + fn), 0.0)
+            if metric == "precision":
+                values = precision
+            elif metric == "recall":
+                values = recall
+            else:
+                denominator = precision + recall
+                values = np.where(denominator > 0, 2 * precision * recall / denominator, 0.0)
+
+        # Drop single-class resamples, as the scorer path does.
+        positives = np.count_nonzero(actual_pos[idx], axis=1)
+        keep = (positives > 0) & (positives < n)
+        samples = [float(v) for v in values[keep]]
 
     if not samples:
         return {"metric": metric, "point": round(point, 4), "low": None, "high": None,
@@ -450,6 +473,20 @@ def bootstrap_interval(
         "resamples": len(samples),
         "confidence": confidence,
     }
+
+
+def _metric_value(y, proba, threshold: float, metric: str) -> float:
+    """One metric via sklearn. The reference the vectorised path must match."""
+    from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+
+    pred = (np.asarray(proba) >= threshold).astype(int)
+    if metric == "precision":
+        return float(precision_score(y, pred, zero_division=0))
+    if metric == "recall":
+        return float(recall_score(y, pred, zero_division=0))
+    if metric == "auc":
+        return float(roc_auc_score(y, proba)) if len(np.unique(y)) > 1 else float("nan")
+    return float(f1_score(y, pred, zero_division=0))
 
 
 def operating_points(y_true, proba, targets: dict | None = None) -> dict:

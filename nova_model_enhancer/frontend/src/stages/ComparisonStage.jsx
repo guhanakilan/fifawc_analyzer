@@ -42,7 +42,6 @@ export default function ComparisonStage({ job, mark, go, operator }) {
         setRunId(runsBody.runs[0]?.run_id || null);
         setGate(gateBody);
         setGateForm({ ...gateBody.gate });
-        setGateApprover(gateBody.approved_by || "");
       })
       .catch((err) => live && setLoadError(err));
     return () => {
@@ -331,6 +330,7 @@ export default function ComparisonStage({ job, mark, go, operator }) {
               comparison={comparison}
               selected={selected}
             />
+            <EscalationSection comparison={comparison} selected={selected} />
             <SignificanceSection comparison={comparison} selected={selected} />
             <OperatingSection comparison={comparison} selected={selected} />
             <DisagreementSection comparison={comparison} selected={selected} />
@@ -1021,6 +1021,83 @@ function ThresholdExplorer({ jobId, runId, comparison, selected }) {
           outside it, so this control cannot offer a value the API would refuse.
         </div>
       )}
+    </>
+  );
+}
+
+/* ── Escalating retrain loop ───────────────────────────────────────────────
+ *
+ * Shown where the promotion decision is made, because the two facts that
+ * matter most are here: whether the target was actually reached, and that the
+ * search never saw the test split.
+ */
+
+const STOP_TONE = {
+  target_reached: "ok",
+  no_improvement: "warn",
+  time_budget: "warn",
+  rounds_exhausted: "warn",
+  gain_within_noise: "warn",
+  cancelled: "muted",
+};
+
+function EscalationSection({ comparison, selected }) {
+  const detail = comparison.candidates?.[selected]?.autotune;
+  if (!detail) return null;
+
+  const reached = detail.target_reached;
+
+  return (
+    <>
+      <SubHeading>Escalating retrain loop</SubHeading>
+
+      <Notice
+        tone={reached ? "ok" : "warn"}
+        title={
+          detail.target_value == null
+            ? `Best of ${detail.rounds_run} round(s) taken`
+            : reached
+              ? `Target ${detail.target_metric} ${detail.target_value} reached`
+              : `Target ${detail.target_metric} ${detail.target_value} was not reached`
+        }
+      >
+        {detail.note}
+      </Notice>
+
+      <MetricGrid
+        compact
+        min={150}
+        items={[
+          {
+            label: `Best validation ${detail.target_metric}`,
+            value: metric(detail.best_score),
+            sub: `round ${detail.best_round ?? "—"}`,
+          },
+          { label: "Rounds run", value: `${detail.rounds_run} of ${detail.rounds_planned}` },
+          {
+            label: "Stopped because",
+            value: (detail.stop_reason || "").replace(/_/g, " "),
+            color: reached ? C.green : "#F59E0B",
+          },
+          { label: "Search time", value: `${detail.elapsed_seconds ?? "—"}s` },
+        ]}
+      />
+
+      {detail.best_params && (
+        <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 6 }}>
+          Winning settings:{" "}
+          <span style={{ fontFamily: "var(--nova-font-mono)" }}>
+            {Object.entries(detail.best_params)
+              .map(([k, v]) => `${k}=${v}`)
+              .join("  ")}
+          </span>
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 4 }}>
+        The validation score above is what the search optimised. The test metrics elsewhere
+        on this page are the honest estimate — expect them to be a little lower, and treat
+        that gap as the cost of searching rather than as a fault.
+      </div>
     </>
   );
 }
