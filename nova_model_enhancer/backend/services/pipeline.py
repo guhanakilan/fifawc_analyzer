@@ -105,31 +105,6 @@ def load_candidate_checkpoints(run_dir: Path) -> dict[str, dict]:
     return recovered
 
 
-def _default_features_config(frame: pd.DataFrame, base: dict, date_column: str | None) -> dict:
-    """Fill in a transform config when the champion package did not carry one.
-
-    Only used when `features_config.json` is absent — every column gets the
-    reference's own default treatment for its dtype, and the choice is recorded
-    in the run manifest so it is visible rather than implicit.
-    """
-    cfg = {k: list(v) for k, v in base.items() if isinstance(v, list)}
-    cfg.setdefault("outlier_capping", [])
-    cfg.setdefault("log_transform", [])
-    cfg.setdefault("imputation", [])
-    cfg.setdefault("encoding", [])
-    cfg.setdefault("scaling", [])
-    configured = {e.get("col") for group in cfg.values() for e in group if isinstance(e, dict)}
-
-    for column in frame.columns:
-        if column in (TARGET, date_column) or column in configured:
-            continue
-        if pd.api.types.is_numeric_dtype(frame[column]):
-            cfg["imputation"].append({"col": column, "strategy": "Median", "enabled": True})
-        else:
-            cfg["encoding"].append({"col": column, "method": "Label", "enabled": True})
-    return cfg
-
-
 def prepare_matrices(
     df: pd.DataFrame, configs: NovaConfigs, date_column: str,
     split_config: dict, weight_strategy: dict,
@@ -153,10 +128,19 @@ def prepare_matrices(
             f"({len(frame)}). The snapshot and its date column are out of step."
         )
 
+    # The champion's own transform configuration, or nothing. Fabricating one
+    # would train the challenger through preprocessing the champion never had,
+    # so the comparison would be between two different pipelines rather than
+    # two models. Intake refuses such a package; this is the second line.
     features_config = configs.features_config or {}
-    used_default_config = not features_config
-    if used_default_config:
-        features_config = _default_features_config(frame, {}, date_column)
+    if not features_config:
+        raise PipelineError(
+            "This champion package carries no transform configuration "
+            "(features_config.json defines no rules), so its preprocessing cannot be "
+            "reproduced. This application will not substitute its own: a challenger "
+            "trained through different preprocessing is not comparable to the champion."
+        )
+    used_default_config = False
 
     y_full = frame[TARGET].fillna(0).astype(int)
     mode = split_config.get("mode", "temporal")
@@ -262,67 +246,43 @@ def benchmark_champion(
 def choose_threshold(
     y_val, proba_val, y_test, proba_test, champion_threshold: float, criterion: str,
 ) -> dict:
-    """Compare the champion threshold, 0.5, and the validation-optimised value.
+    """Score every challenger at the champion's own threshold. No selection.
 
-    The sweep runs on validation rows only. Every candidate is then reported on
-    the test rows, which the sweep never saw.
+    The challenger must operate at the cutoff the champion runs at in production,
+    so a metric difference between them is the model and nothing else. Picking a
+    different threshold per model was comparing two operating points as well as
+    two models, and flattered whichever one got the more favourable cutoff.
+
+    The validation sweep is still computed and reported, because seeing what
+    another cutoff would do is useful — but it is advisory, and never applied.
     """
-    # The champion is always scored at the threshold it actually runs on in
-    # production, even if that is below the floor this application enforces for
-    # challengers. Clamping it would report numbers for a model that does not
-    # exist; the disclosure below says so instead.
-    champion_value = float(champion_threshold)
-    champion_below_floor = champion_value < evaluator.MIN_THRESHOLD
+    operating = float(champion_threshold)
 
-    candidates: dict[str, float] = {
-        "champion_threshold": champion_value,
-        f"floor_{evaluator.MIN_THRESHOLD:g}": evaluator.MIN_THRESHOLD,
-    }
     sweep = None
     if proba_val is not None and y_val is not None and len(np.unique(y_val)) > 1:
         sweep = evaluator.threshold_sweep(y_val, proba_val)
-        best = sweep["best"].get(criterion) or sweep["best"]["f1"]
-        candidates["validation_optimised"] = float(best["threshold"])
-    else:
-        candidates["validation_optimised"] = evaluator.MIN_THRESHOLD
 
-    comparison = []
-    for name, value in candidates.items():
-        metrics = evaluator.metrics_at_threshold(y_test, proba_test, value)
-        comparison.append({"candidate": name, "threshold": value, "test_metrics": metrics})
-
-    # A challenger may only be selected at a threshold on the allowed grid. The
-    # champion's own value stays in the table for comparison but cannot be
-    # adopted by a challenger when it sits below the floor.
-    selectable = [
-        row for row in comparison
-        if evaluator.MIN_THRESHOLD <= row["threshold"] <= evaluator.MAX_THRESHOLD
-    ] or [row for row in comparison if row["candidate"].startswith("floor_")]
-
-    selected = max(selectable, key=lambda row: row["test_metrics"].get(criterion) or 0)
+    metrics = evaluator.metrics_at_threshold(y_test, proba_test, operating)
     return {
         "criterion": criterion,
         "validation_sweep": sweep,
-        "candidates": comparison,
-        "selected_threshold": selected["threshold"],
-        "selected_candidate": selected["candidate"],
+        "candidates": [{
+            "candidate": "champion_threshold",
+            "threshold": operating,
+            "test_metrics": metrics,
+        }],
+        "selected_threshold": operating,
+        "selected_candidate": "champion_threshold",
         "threshold_range": {
             "min": evaluator.MIN_THRESHOLD,
             "max": evaluator.MAX_THRESHOLD,
             "step": evaluator.THRESHOLD_STEP,
         },
-        "champion_below_floor": champion_below_floor,
+        "champion_below_floor": operating < evaluator.MIN_THRESHOLD,
         "selection_note": (
-            "Threshold candidates are generated on the validation slice; the value "
-            "reported here is each candidate's performance on the held-out test slice. "
-            f"A challenger may only be selected between {evaluator.MIN_THRESHOLD:g} and "
-            f"{evaluator.MAX_THRESHOLD:g}."
-            + (
-                f" The champion runs at {champion_value:g}, below that floor; it is scored "
-                "at its real threshold here because reporting it at any other value would "
-                "describe a model that is not in production."
-                if champion_below_floor else ""
-            )
+            f"Every model is scored at the champion's operating threshold ({operating:g}), "
+            "so a difference between them is the model rather than the cutoff. The "
+            "validation sweep below is advisory only and is never applied."
         ),
     }
 

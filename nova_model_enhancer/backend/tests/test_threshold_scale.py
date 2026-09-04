@@ -55,46 +55,66 @@ def test_no_swept_threshold_is_below_a_coin_flip():
     assert all(row["t"] >= 0.5 for row in threshold_sweep(y, proba)["sweep"])
 
 
-# ── The champion is scored honestly, not clamped ─────────────────────────────
+# ── Every model is scored at the champion's threshold ────────────────────────
+#
+# Threshold *selection* was removed: picking a different cutoff per model
+# compared two operating points as well as two models, and flattered whichever
+# got the more favourable one. The champion's threshold is now the operating
+# point for everything.
 
-def test_a_champion_below_the_floor_keeps_its_real_threshold():
-    """Clamping it would report numbers for a model that is not in production."""
+def _probabilities(seed):
+    y = np.resize([0, 1], 200)
+    rng = np.random.default_rng(seed)
+    proba = np.clip(rng.normal(0.5 + 0.2 * (2 * y - 1), 0.2), 0.001, 0.999)
+    return y, proba
+
+
+def test_the_champions_threshold_is_the_operating_point():
     from backend.services.pipeline import choose_threshold
 
-    y_val = np.resize([0, 1], 200)
-    y_test = np.resize([0, 1], 200)
-    rng = np.random.default_rng(5)
-    proba_val = np.clip(rng.normal(0.5 + 0.2 * (2 * y_val - 1), 0.2), 0.001, 0.999)
-    proba_test = np.clip(rng.normal(0.5 + 0.2 * (2 * y_test - 1), 0.2), 0.001, 0.999)
+    y_val, proba_val = _probabilities(5)
+    y_test, proba_test = _probabilities(6)
+
+    result = choose_threshold(y_val, proba_val, y_test, proba_test, 0.5, "f1")
+    assert result["selected_threshold"] == 0.5
+    assert result["selected_candidate"] == "champion_threshold"
+
+
+def test_an_unusual_champion_threshold_is_still_used_verbatim():
+    """Including below the 0.50 floor: that is where the champion actually runs."""
+    from backend.services.pipeline import choose_threshold
+
+    y_val, proba_val = _probabilities(7)
+    y_test, proba_test = _probabilities(8)
 
     result = choose_threshold(y_val, proba_val, y_test, proba_test, 0.35, "f1")
-
+    assert result["selected_threshold"] == 0.35
     assert result["champion_below_floor"] is True
-    champion_row = next(
-        r for r in result["candidates"] if r["candidate"] == "champion_threshold"
-    )
-    assert champion_row["threshold"] == 0.35, "the champion must be scored where it runs"
-    assert "not in production" in result["selection_note"]
 
 
-def test_a_challenger_is_never_selected_below_the_floor():
+def test_no_alternative_threshold_can_be_selected():
+    """The sweep is still reported, but it is advisory and never applied."""
     from backend.services.pipeline import choose_threshold
 
-    y_val = np.resize([0, 1], 200)
-    y_test = np.resize([0, 1], 200)
-    rng = np.random.default_rng(6)
-    proba_val = np.clip(rng.normal(0.5 + 0.2 * (2 * y_val - 1), 0.2), 0.001, 0.999)
-    proba_test = np.clip(rng.normal(0.5 + 0.2 * (2 * y_test - 1), 0.2), 0.001, 0.999)
+    y_val, proba_val = _probabilities(9)
+    y_test, proba_test = _probabilities(10)
 
-    result = choose_threshold(y_val, proba_val, y_test, proba_test, 0.20, "f1")
-    assert result["selected_threshold"] >= MIN_THRESHOLD
+    result = choose_threshold(y_val, proba_val, y_test, proba_test, 0.7, "f1")
+    assert [c["threshold"] for c in result["candidates"]] == [0.7]
+    assert result["validation_sweep"] is not None, "the sweep stays available as guidance"
+    assert "never applied" in result["selection_note"]
 
 
-def test_a_champion_on_the_grid_is_not_flagged():
+def test_champion_and_challenger_are_compared_at_one_cutoff():
+    """The point of the change: a metric difference is the model, not the cutoff."""
+    from backend.services.evaluator import metrics_at_threshold
     from backend.services.pipeline import choose_threshold
 
-    y = np.resize([0, 1], 120)
-    proba = np.clip(np.linspace(0.2, 0.8, 120), 0.001, 0.999)
-    result = choose_threshold(y, proba, y, proba, 0.5, "f1")
-    assert result["champion_below_floor"] is False
-    assert "not in production" not in result["selection_note"]
+    y_test, champion_proba = _probabilities(11)
+    _, challenger_proba = _probabilities(12)
+
+    result = choose_threshold(y_test, challenger_proba, y_test, challenger_proba, 0.62, "f1")
+    champion = metrics_at_threshold(y_test, champion_proba, 0.62)
+
+    assert result["selected_threshold"] == 0.62
+    assert champion["f1"] is not None

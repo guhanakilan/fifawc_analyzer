@@ -28,6 +28,15 @@ TARGET = "NonVoiceFlag"
 
 # ── Column identity ──────────────────────────────────────────────────────────
 
+# The custom-column types this version implements, matching the reference's
+# `routers/custom_cols._apply_derived_config`.
+KNOWN_DERIVED_TYPES = frozenset({"date_diff", "date_part", "condition"})
+
+
+class DerivedColumnError(ValueError):
+    """A custom column the champion defines could not be rebuilt from this data."""
+
+
 def norm_col(name: Any) -> str:
     """strip -> collapse whitespace -> drop special chars -> lowercase.
 
@@ -404,7 +413,46 @@ def build_modelling_frame(df: pd.DataFrame, configs: "NovaConfigs") -> pd.DataFr
         df = df[keep]
 
     df = apply_dtype_config(df, configs.dtype_config)
+
     df = apply_derived_config(df, configs.derived_config)
+    # A custom column added in NoVA ML arrives here through derived_config.json.
+    # If one silently fails to build — a renamed source column, an unsupported
+    # type from a newer NoVA ML — the model is quietly trained without a feature
+    # the champion has. That must be an error, not a missing column.
+    expected_derived = []
+    unknown_types = []
+    for spec in (configs.derived_config or []):
+        if not isinstance(spec, dict) or not spec.get("output_col"):
+            continue
+        expected_derived.append(str(spec["output_col"]))
+        # The reference treats any unrecognised col_type as "condition", which
+        # with no branches yields a column of nulls. That is a silent
+        # substitution, so a type this version does not implement — a newer NoVA
+        # ML, say — is refused rather than reproduced as an empty column.
+        if str(spec.get("col_type", "condition")) not in KNOWN_DERIVED_TYPES:
+            unknown_types.append(f"{spec['output_col']} ({spec.get('col_type')})")
+
+    if unknown_types:
+        raise DerivedColumnError(
+            "The champion defines custom column(s) of a type this version cannot build: "
+            + ", ".join(unknown_types)
+            + ". This application would otherwise produce an empty column and train "
+            "without the feature; the enhancer needs updating to match that NoVA ML build."
+        )
+
+    missing_derived = [c for c in expected_derived if c not in df.columns]
+    empty_derived = [
+        c for c in expected_derived
+        if c in df.columns and df[c].isna().all() and len(df)
+    ]
+    if missing_derived or empty_derived:
+        broken = missing_derived + empty_derived
+        raise DerivedColumnError(
+            "The champion defines custom column(s) this data cannot reproduce: "
+            + ", ".join(broken)
+            + ". Check that their source columns are present and named as the champion "
+            "expects; training without them would not reproduce the champion's features."
+        )
     df = apply_bucketing(df, configs.bucket_config, "_Bucket")
     df = apply_grouping(df, configs.grouping_config, "_Grouped")
 

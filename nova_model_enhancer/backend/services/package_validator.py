@@ -255,6 +255,29 @@ def validate_and_extract(zip_path: Path, extraction_dir: Path) -> dict[str, Any]
             else "Unreadable: " + "; ".join(json_errors[:3]),
             True,
         ))
+        # Presence is not enough: an empty features_config.json passes a file-list
+        # check and then leaves the enhancer with no transform configuration at
+        # all. Rather than invent one — which would train the challenger through
+        # preprocessing the champion never had — the package is refused here.
+        features_cfg_early = parsed.get("features_config.json") or {}
+        transform_groups = (
+            {k: v for k, v in features_cfg_early.items() if isinstance(v, list) and v}
+            if isinstance(features_cfg_early, dict) else {}
+        )
+        checks.append(Check(
+            "features_config", "Transform configuration",
+            "passed" if transform_groups else "failed",
+            (
+                f"{sum(len(v) for v in transform_groups.values())} transform rule(s) across "
+                f"{len(transform_groups)} group(s)"
+                if transform_groups else
+                "features_config.json is present but defines no transforms. The champion's "
+                "preprocessing cannot be reproduced from it, and this application will not "
+                "substitute its own — a challenger trained through different preprocessing "
+                "is not comparable to the champion."
+            ),
+            True,
+        ))
         checks.append(Check(
             "pickle", "Deferred model load", "passed",
             "No .pkl was opened during intake. The estimator is loaded only in the "

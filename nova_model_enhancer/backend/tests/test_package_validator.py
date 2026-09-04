@@ -24,11 +24,19 @@ def _minimal_members(prefix: str = "") -> dict[str, bytes]:
             "scoring" if name.startswith("threshold") else
             "metadata" if name.startswith("training") else "config"
         )
-        payload = (
-            json.dumps({"best_model": "JOB_x_lgb"}).encode()
-            if name == "training_results.json"
-            else json.dumps({}).encode() if name.endswith(".json") else b"placeholder"
-        )
+        if name == "training_results.json":
+            payload = json.dumps({"best_model": "JOB_x_lgb"}).encode()
+        elif name == "features_config.json":
+            # Presence alone is no longer enough: a features_config defining no
+            # transforms cannot reproduce the champion's preprocessing, so the
+            # minimal *valid* package carries at least one real rule.
+            payload = json.dumps({
+                "imputation": [{"col": "agedays", "strategy": "Median", "enabled": True}],
+            }).encode()
+        elif name.endswith(".json"):
+            payload = json.dumps({}).encode()
+        else:
+            payload = b"placeholder"
         members[f"{prefix}{folder}/{name}"] = payload
     members[f"{prefix}model/JOB_x_lgb.pkl"] = b"placeholder"
     return members
@@ -250,3 +258,33 @@ def test_inspector_path_imports_only_the_standard_library():
         "the intake path must not need the third-party stack, but imports: "
         + ", ".join(offenders)
     )
+
+
+def test_a_features_config_defining_no_transforms_is_refused(tmp_path):
+    """Presence is not enough.
+
+    An empty features_config.json used to pass intake and leave the pipeline
+    with no transform configuration, which it then fabricated — training the
+    challenger through preprocessing the champion never had. The package is now
+    refused instead, so the divergence cannot happen.
+    """
+    members = _minimal_members()
+    members["config/features_config.json"] = json.dumps({}).encode()
+
+    result = validate_and_extract(_write(tmp_path / "empty.zip", members), tmp_path / "out")
+
+    assert result["valid"] is False
+    failed = [c for c in result["checks"] if c["key"] == "features_config"]
+    assert failed and failed[0]["status"] == "failed"
+    assert "will not substitute its own" in failed[0]["detail"]
+
+
+def test_a_features_config_with_only_empty_groups_is_refused(tmp_path):
+    """Group keys present but every list empty is the same problem."""
+    members = _minimal_members()
+    members["config/features_config.json"] = json.dumps({
+        "imputation": [], "encoding": [], "scaling": [],
+    }).encode()
+
+    result = validate_and_extract(_write(tmp_path / "hollow.zip", members), tmp_path / "out")
+    assert result["valid"] is False
