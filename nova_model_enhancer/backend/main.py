@@ -21,6 +21,7 @@ from .routers.comparison import router as comparison_router
 from .routers.export import router as export_router
 from .routers.packages import router as packages_router
 from .routers.readiness import router as readiness_router
+from .routers.rules import router as rules_router
 from .routers.training import router as training_router
 from .routers.training_data import router as training_data_router
 from .routers.weights import router as weights_router
@@ -67,7 +68,7 @@ app.add_middleware(
 
 for router in (
     packages_router, training_data_router, readiness_router, weights_router,
-    training_router, comparison_router, export_router, audit_router,
+    rules_router, training_router, comparison_router, export_router, audit_router,
 ):
     app.include_router(router)
 

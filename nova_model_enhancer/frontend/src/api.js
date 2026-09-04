@@ -76,6 +76,10 @@ export const api = {
     request(`/api/training-data/${jobId}/${assetId}`, { method: "DELETE" }),
 
   review: (jobId) => request(`/api/readiness/${jobId}/review`),
+  rules: (jobId) => request(`/api/rules/${jobId}`),
+  saveRules: (jobId, payload) => request(`/api/rules/${jobId}`, json(payload)),
+  recommendations: (jobId) => request(`/api/rules/${jobId}/recommendations`),
+  interventions: (jobId) => request(`/api/rules/${jobId}/interventions`),
   saveDecisions: (jobId, payload) => request(`/api/readiness/${jobId}/decisions`, json(payload)),
   buildSnapshot: (jobId) => request(`/api/readiness/${jobId}/snapshot`, { method: "POST" }),
   snapshot: (jobId) => request(`/api/readiness/${jobId}/snapshot`),

@@ -260,6 +260,17 @@ def drift_report(profile: dict, expected_columns: list[str], column_map: list | 
 
 # ── Column lineage ───────────────────────────────────────────────────────────
 
+# Bookkeeping columns this application adds when it combines uploads. They are
+# not user data and reporting them as drift sends someone looking for a column
+# they never supplied.
+INTERNAL_COLUMNS = ("__source_role__", "NonVoiceFlag")
+
+
+def _is_internal(column: str) -> bool:
+    name = str(column)
+    return name in INTERNAL_COLUMNS or (name.startswith("__") and name.endswith("__"))
+
+
 def _map_entries(column_map: list | None) -> list[dict]:
     """Normalise column_map into {inventory, production, include} records."""
     entries = []
@@ -419,7 +430,9 @@ def column_lineage(
     )
     unexpected = sorted(
         c for c in renamed_uploaded
-        if norm_col(c) not in seen and not is_model_output(c)
+        if norm_col(c) not in seen
+        and not is_model_output(c)
+        and not _is_internal(c)
     )
 
     return {

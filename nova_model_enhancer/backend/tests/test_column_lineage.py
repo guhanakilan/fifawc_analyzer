@@ -83,3 +83,17 @@ def test_fitted_layer_is_optional_and_marked_as_such(configs):
     assert with_fitted["layers"]["fitted_available"] is True
     payername = next(c for c in with_fitted["columns"] if c["column"].lower() == "payername")
     assert payername["fitted_feature_count"] == 2
+
+
+def test_internal_bookkeeping_columns_are_not_reported_as_drift(configs):
+    """__source_role__ is added by this app when combining uploads, not by the user.
+
+    Reporting it as a new column sends someone looking for data they never
+    supplied — and it appears on every multi-file upload, so the false alarm
+    would be permanent.
+    """
+    report = column_lineage(configs, [
+        "AmountBilled", "PayerName", "DOSFrom", "UpdatedDateTimeGMT",
+        "__source_role__", "NonVoiceFlag",
+    ])
+    assert report["unexpected_columns"] == []

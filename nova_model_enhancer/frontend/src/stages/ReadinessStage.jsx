@@ -19,13 +19,23 @@ export default function ReadinessStage({ job, mark, go }) {
   const [busy, setBusy] = React.useState(false);
   const [form, setForm] = React.useState(null);
   const [mappings, setMappings] = React.useState({});
+  const [advice, setAdvice] = React.useState(null);
+  const [checks, setChecks] = React.useState(null);
+  const [applied, setApplied] = React.useState({});
 
   React.useEffect(() => {
     let live = true;
     if (!job) return () => {};
     setLoading(true);
-    Promise.all([api.review(job.job_id), api.snapshot(job.job_id).catch(() => null)])
-      .then(([reviewBody, snapshotBody]) => {
+    Promise.all([
+      api.review(job.job_id),
+      api.snapshot(job.job_id).catch(() => null),
+      api.recommendations(job.job_id).catch(() => null),
+      api.interventions(job.job_id).catch(() => null),
+    ])
+      .then(([reviewBody, snapshotBody, adviceBody, checksBody]) => {
+        setAdvice(adviceBody);
+        setChecks(checksBody);
         if (!live) return;
         setReview(reviewBody);
         setSnapshot(snapshotBody);
@@ -175,6 +185,20 @@ export default function ReadinessStage({ job, mark, go }) {
           Read from <code>routers/flag.py::run_flag</code> in the NoVA source, not assumed.
         </Notice>
       </Card>
+
+      {checks && <InterventionChecks checks={checks} />}
+
+      {advice && (
+        <Recommendations
+          advice={advice}
+          form={form}
+          applied={applied}
+          onApply={(field, value) => {
+            set(field, value);
+            setApplied((current) => ({ ...current, [field]: true }));
+          }}
+        />
+      )}
 
       {review.column_lineage && <ColumnLineage lineage={review.column_lineage} />}
 
@@ -582,6 +606,172 @@ function ColumnLineage({ lineage }) {
         rowKey={(row) => row.column}
         empty="No columns to trace."
       />
+    </Card>
+  );
+}
+
+/* ── Intervention checks ───────────────────────────────────────────────────
+ *
+ * Rules, not hard-coded logic: every threshold here comes from the job's rule
+ * set and can be changed without touching this file. A finding states what was
+ * measured against what threshold, so it can be argued with on the facts.
+ */
+
+function InterventionChecks({ checks }) {
+  if (checks.clear) {
+    return (
+      <Notice tone="ok" title="No readiness rules are firing on this data">
+        Every configured check passed. The measured values are still recorded with your
+        decisions, so this run can be explained later.
+      </Notice>
+    );
+  }
+
+  const blocks = checks.findings.filter((f) => f.action === "block");
+  const warns = checks.findings.filter((f) => f.action === "warn");
+
+  return (
+    <Card borderSize={blocks.length ? 2 : 1}>
+      <SectionTitle
+        sub="Configured rules evaluated against this upload. A block needs a decision from you; a warning is visible but passable."
+        right={
+          <>
+            {blocks.length > 0 && <Pill tone="bad">{blocks.length} blocking</Pill>}
+            {warns.length > 0 && <Pill tone="warn">{warns.length} warning</Pill>}
+          </>
+        }
+      >
+        Readiness checks
+      </SectionTitle>
+
+      {checks.findings.map((finding) => (
+        <Notice
+          key={finding.id}
+          tone={finding.action === "block" ? "bad" : "warn"}
+          title={finding.label}
+        >
+          <div>{finding.why}</div>
+          <div style={{ marginTop: 6, fontFamily: "var(--nova-font-mono)", fontSize: 11.5 }}>
+            measured {String(finding.measured)}
+            {finding.threshold !== null && finding.threshold !== undefined
+              ? ` · threshold ${finding.threshold}${finding.unit ? ` ${finding.unit}` : ""}`
+              : ""}
+          </div>
+        </Notice>
+      ))}
+    </Card>
+  );
+}
+
+/* ── Recommendations ───────────────────────────────────────────────────────
+ *
+ * Advisory only. Nothing is applied until you press Use it, and the decisions
+ * form below is still the thing that gets saved.
+ */
+
+const CONFIDENCE_TONE = { high: "ok", medium: "warn", low: "muted" };
+
+function describeValue(value) {
+  if (value === null || value === undefined || value === "") return "no recommendation";
+  if (Array.isArray(value)) return value.length ? value.join(", ") : "none";
+  return String(value);
+}
+
+function currentlyMatches(form, field, value) {
+  const current = form?.[field];
+  if (Array.isArray(value)) {
+    return Array.isArray(current) && current.join(",") === value.join(",");
+  }
+  return String(current ?? "") === String(value ?? "");
+}
+
+function Recommendations({ advice, form, applied, onApply }) {
+  const models = advice.local_models || {};
+  const layers = [models.embeddings, models.generation].filter(Boolean);
+
+  return (
+    <Card>
+      <SectionTitle sub={advice.note}>Suggestions</SectionTitle>
+
+      {advice.suggestions.length === 0 && (
+        <EmptyState icon="inbox">
+          Nothing to suggest for this data yet.
+        </EmptyState>
+      )}
+
+      {advice.suggestions.map((suggestion) => {
+        const matches = currentlyMatches(form, suggestion.field, suggestion.value);
+        const actionable = suggestion.value !== null && suggestion.value !== undefined;
+        return (
+          <div
+            key={`${suggestion.field}-${suggestion.rule}`}
+            style={{
+              border: "1px solid var(--nova-input-border)",
+              borderRadius: 8,
+              padding: "11px 13px",
+              marginBottom: 9,
+              background: "var(--nova-input-bg)",
+            }}
+          >
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontWeight: 700, fontSize: 12.5 }}>{suggestion.field}</span>
+              <Badge small>{describeValue(suggestion.value)}</Badge>
+              <Pill tone={CONFIDENCE_TONE[suggestion.confidence] || "muted"}>
+                {suggestion.confidence} confidence
+              </Pill>
+              <Pill tone="muted">{suggestion.source}</Pill>
+              <span style={{ flex: 1 }} />
+              {actionable && (
+                matches ? (
+                  <Pill tone="ok">in use</Pill>
+                ) : (
+                  <Btn variant="secondary" small onClick={() => onApply(suggestion.field, suggestion.value)}>
+                    <MIcon name="check" size={14} /> Use it
+                  </Btn>
+                )
+              )}
+            </div>
+            <div style={{ marginTop: 6, fontSize: 12, color: "var(--nova-grey-dim)" }}>
+              {suggestion.why}
+            </div>
+            <div style={{ marginTop: 4, fontSize: 11, fontFamily: "var(--nova-font-mono)", color: "var(--nova-grey-dim)" }}>
+              rule: {suggestion.rule}
+              {applied[suggestion.field] && !matches ? " · overridden since" : ""}
+            </div>
+          </div>
+        );
+      })}
+
+      {advice.subtask_suggestions?.length > 0 && (
+        <>
+          <SubHeading>Unmapped SubTasks</SubHeading>
+          <Table
+            columns={[
+              { key: "subtask", header: "SubTask" },
+              { key: "rows", header: "Rows", className: "num" },
+              { key: "suggested_flag", header: "Suggested" },
+              {
+                key: "source",
+                header: "From",
+                render: (row) => <Pill tone={row.source === "embeddings" ? "info" : "muted"}>{row.source}</Pill>,
+              },
+              { key: "why", header: "Why" },
+            ]}
+            rows={advice.subtask_suggestions}
+            rowKey={(row) => row.subtask}
+            empty="No unmapped SubTasks."
+          />
+        </>
+      )}
+
+      <div style={{ marginTop: 12, fontSize: 11.5, color: "var(--nova-grey-dim)" }}>
+        {layers.map((layer) => (
+          <div key={layer.name}>
+            <strong>{layer.name}</strong>: {layer.available ? "available" : "not installed"}
+            {layer.available ? "" : ` — ${layer.detail}`}
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }
