@@ -27,6 +27,9 @@ XlsxWriter>=3.1
 # scikit-learn 1.6 introduced sklearn.frozen.FrozenEstimator, which the
 # probability calibration step depends on.
 scikit-learn>=1.6,<2
+# scikit-learn already pulls scipy in, but the model-comparison significance
+# test imports it directly, so it is declared rather than relied on transitively.
+scipy>=1.10,<2
 xgboost>=2.0,<4
 lightgbm>=4.0,<5
 optuna>=3.4,<6

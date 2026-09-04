@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from . import evaluator, labeling
+from . import evaluator, guidance, labeling
 from . import snapshot as snapshot_service
 from .nova_transform import TARGET
 
@@ -62,6 +62,19 @@ def build_comparison(
 
     champion_threshold = float((run.get("champion") or {}).get("threshold", 0.5))
     champion_metrics = evaluator.metrics_at_threshold(y_test, champion_proba, champion_threshold)
+    # The champion's own operating points and cost, so a challenger's are read
+    # against something rather than in isolation.
+    champion_cost_ratio = float(gate.get("cost_ratio") or evaluator.DEFAULT_COST_RATIO)
+    champion_extras = {
+        "operating_points": evaluator.operating_points(y_test, champion_proba),
+        "cost": evaluator.cost_weighted(
+            y_test, champion_proba, champion_threshold, champion_cost_ratio
+        ),
+        "confidence_interval": evaluator.bootstrap_interval(
+            y_test, champion_proba, champion_threshold,
+            metric=gate.get("primary_metric", "f1"),
+        ),
+    }
 
     # Historical vs recent halves of the benchmark, split at its own median date.
     historical_mask = recent_mask = None
@@ -116,6 +129,23 @@ def build_comparison(
             "best_params": record.get("best_params"),
             "train_time_seconds": record.get("train_time_seconds"),
         }
+        # Item 8: is the difference real, how does it operate, what does it cost,
+        # and where exactly does it differ from the champion?
+        cost_ratio = float(gate.get("cost_ratio") or evaluator.DEFAULT_COST_RATIO)
+        candidates[candidate_id].update({
+            "significance": evaluator.mcnemar(
+                y_test, champion_proba, proba, champion_threshold, threshold
+            ),
+            "confidence_interval": evaluator.bootstrap_interval(
+                y_test, proba, threshold, metric=gate.get("primary_metric", "f1")
+            ),
+            "operating_points": evaluator.operating_points(y_test, proba),
+            "cost": evaluator.cost_weighted(y_test, proba, threshold, cost_ratio),
+            "disagreement": evaluator.disagreement(
+                y_test, champion_proba, proba, champion_threshold, threshold, segments
+            ),
+        })
+
         historical[candidate_id] = _slice_metrics(historical_mask, y_test, proba, threshold)
         recent[candidate_id] = _slice_metrics(recent_mask, y_test, proba, threshold)
         period_breakdown[candidate_id] = evaluator.period_breakdown(
@@ -172,7 +202,7 @@ def build_comparison(
         )
 
     leader = ranked[0][0] if ranked else None
-    return {
+    payload = {
         "run_id": run.get("run_id"),
         "snapshot_id": snapshot_id,
         "benchmark": {
@@ -190,9 +220,11 @@ def build_comparison(
             "test_metrics": champion_metrics,
             "source_metrics_from_package": (run.get("champion") or {}).get("source_metrics_from_package"),
             "latency": (run.get("champion") or {}).get("latency"),
+            **champion_extras,
         },
         "candidates": candidates,
         "ranking": [candidate_id for candidate_id, _ in ranked],
+        "cost_ratio": champion_cost_ratio,
         "leading_candidate": leader,
         "gate_results": gate_results,
         "gate_result": gate_results.get(leader) if leader else None,
@@ -208,3 +240,8 @@ def build_comparison(
         "weights": run.get("weights"),
         "weight_formula": run.get("weight_formula"),
     }
+
+    # Read the assembled comparison back and suggest what would plausibly help
+    # next. Never a promotion recommendation — that stays a human decision.
+    payload["guidance"] = guidance.suggest(payload, run)
+    return payload

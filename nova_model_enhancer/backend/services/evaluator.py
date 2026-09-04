@@ -304,3 +304,281 @@ def evaluate_gate(champion_metrics: dict, challenger_metrics: dict, gate: dict,
         "blockers": blockers,
         "gate": gate,
     }
+
+
+# ── Item 8: significance, operating points, cost and disagreement ────────────
+#
+# Everything below is computed from the saved test-set probabilities and labels,
+# so it costs one pass over an array rather than a refit.
+
+# A missed Voice (predicted Non-Voice, actually needed a call) stalls the claim;
+# a wasted Voice burns an agent's time. Approved as 3:1. Editable per gate.
+DEFAULT_COST_RATIO = 3.0
+
+
+def mcnemar(y_true, proba_a, proba_b, threshold_a: float, threshold_b: float) -> dict:
+    """Is the difference between two models real, or could it be noise?
+
+    Compares the two models on the *same* rows and counts only where they
+    disagree, which is the question a difference in headline F1 cannot answer:
+    +1% on 778 rows may be a handful of flips.
+    """
+    y = np.asarray(y_true).astype(int)
+    pred_a = (np.asarray(proba_a) >= threshold_a).astype(int)
+    pred_b = (np.asarray(proba_b) >= threshold_b).astype(int)
+
+    a_right = pred_a == y
+    b_right = pred_b == y
+    only_a = int(np.sum(a_right & ~b_right))
+    only_b = int(np.sum(~a_right & b_right))
+    discordant = only_a + only_b
+
+    if discordant == 0:
+        return {
+            "champion_only_correct": 0, "challenger_only_correct": 0,
+            "discordant": 0, "statistic": None, "p_value": None,
+            "significant": False,
+            "interpretation": "The two models make identical predictions on every test row.",
+        }
+
+    # Exact binomial test; the chi-square approximation is unreliable when the
+    # discordant count is small, which is exactly when this matters most.
+    from scipy.stats import binomtest
+
+    result = binomtest(min(only_a, only_b), n=discordant, p=0.5)
+    p_value = float(result.pvalue)
+    significant = p_value < 0.05
+    better = "challenger" if only_b > only_a else "champion"
+
+    if significant:
+        interpretation = (
+            f"The {better} is better on significantly more rows than the other "
+            f"(p = {p_value:.4f}). This difference is unlikely to be chance."
+        )
+    else:
+        interpretation = (
+            f"The models disagree on {discordant} rows, split {only_a}/{only_b} — "
+            f"p = {p_value:.3f}, so this difference is within what chance would produce. "
+            "Treat the two as equivalent on this evidence."
+        )
+
+    return {
+        "champion_only_correct": only_a,
+        "challenger_only_correct": only_b,
+        "discordant": discordant,
+        "statistic": float(min(only_a, only_b)),
+        "p_value": round(p_value, 6),
+        "significant": significant,
+        "interpretation": interpretation,
+    }
+
+
+def bootstrap_interval(
+    y_true, proba, threshold: float, metric: str = "f1",
+    resamples: int = 400, seed: int = 42, confidence: float = 0.95,
+) -> dict:
+    """Confidence interval for one metric, by resampling the test rows.
+
+    A point estimate on a few hundred rows carries more uncertainty than its
+    four decimal places suggest; this says how much.
+    """
+    from sklearn.metrics import f1_score, precision_score, recall_score, roc_auc_score
+
+    y = np.asarray(y_true).astype(int)
+    p = np.asarray(proba, dtype=float)
+    n = len(y)
+    if n == 0:
+        return {"metric": metric, "point": None, "low": None, "high": None, "resamples": 0}
+
+    scorers = {
+        "f1": lambda yt, pr, pb: f1_score(yt, pr, zero_division=0),
+        "precision": lambda yt, pr, pb: precision_score(yt, pr, zero_division=0),
+        "recall": lambda yt, pr, pb: recall_score(yt, pr, zero_division=0),
+        "auc": lambda yt, pr, pb: roc_auc_score(yt, pb) if len(np.unique(yt)) > 1 else np.nan,
+    }
+    score = scorers.get(metric, scorers["f1"])
+
+    rng = np.random.default_rng(seed)
+    point = float(score(y, (p >= threshold).astype(int), p))
+    samples = []
+    for _ in range(resamples):
+        idx = rng.integers(0, n, n)
+        ys, ps = y[idx], p[idx]
+        if len(np.unique(ys)) < 2:
+            continue
+        value = score(ys, (ps >= threshold).astype(int), ps)
+        if not np.isnan(value):
+            samples.append(float(value))
+
+    if not samples:
+        return {"metric": metric, "point": round(point, 4), "low": None, "high": None,
+                "resamples": 0}
+
+    tail = (1.0 - confidence) / 2.0
+    low = float(np.quantile(samples, tail))
+    high = float(np.quantile(samples, 1.0 - tail))
+    return {
+        "metric": metric,
+        "point": round(point, 4),
+        "low": round(low, 4),
+        "high": round(high, 4),
+        "width": round(high - low, 4),
+        "resamples": len(samples),
+        "confidence": confidence,
+    }
+
+
+def operating_points(y_true, proba, targets: dict | None = None) -> dict:
+    """Where the model sits when framed the way it is actually used.
+
+    "If I must catch 80% of Voice, what precision do I keep?" is the operational
+    question; a single F1 hides it.
+    """
+    from sklearn.metrics import precision_recall_curve
+
+    limits = {"recall_target": 0.80, "precision_target": 0.80, **(targets or {})}
+    y = np.asarray(y_true).astype(int)
+    p = np.asarray(proba, dtype=float)
+    if len(np.unique(y)) < 2:
+        return {"available": False, "reason": "The test set contains a single class."}
+
+    precision, recall, thresholds = precision_recall_curve(y, p)
+    # precision_recall_curve returns one more point than thresholds.
+    precision, recall = precision[:-1], recall[:-1]
+
+    def at_least_recall(target):
+        mask = recall >= target
+        if not mask.any():
+            return None
+        best = int(np.argmax(np.where(mask, precision, -1)))
+        return {
+            "threshold": round(float(thresholds[best]), 4),
+            "precision": round(float(precision[best]), 4),
+            "recall": round(float(recall[best]), 4),
+        }
+
+    def at_least_precision(target):
+        mask = precision >= target
+        if not mask.any():
+            return None
+        best = int(np.argmax(np.where(mask, recall, -1)))
+        return {
+            "threshold": round(float(thresholds[best]), 4),
+            "precision": round(float(precision[best]), 4),
+            "recall": round(float(recall[best]), 4),
+        }
+
+    # Lift in the top decile: how much richer the highest-scoring 10% is than
+    # the base rate. Prioritisation value, not accuracy.
+    order = np.argsort(-p)
+    decile = max(1, len(y) // 10)
+    base_rate = float(y.mean())
+    top_rate = float(y[order[:decile]].mean())
+    lift = round(top_rate / base_rate, 3) if base_rate > 0 else None
+
+    return {
+        "available": True,
+        "precision_at_recall": at_least_recall(limits["recall_target"]),
+        "recall_at_precision": at_least_precision(limits["precision_target"]),
+        "recall_target": limits["recall_target"],
+        "precision_target": limits["precision_target"],
+        "top_decile": {
+            "rows": decile,
+            "positive_rate": round(top_rate, 4),
+            "base_rate": round(base_rate, 4),
+            "lift": lift,
+        },
+    }
+
+
+def cost_weighted(y_true, proba, threshold: float, cost_ratio: float = DEFAULT_COST_RATIO) -> dict:
+    """Total cost when the two error types are not equally expensive.
+
+    Internally 0 = Voice and 1 = Non-Voice. A *missed Voice* is predicting
+    Non-Voice for a row that actually needed a call — the account goes unworked
+    and the claim stalls. A *wasted Voice* is the reverse: an agent calls an
+    account that did not need it.
+    """
+    y = np.asarray(y_true).astype(int)
+    pred = (np.asarray(proba, dtype=float) >= threshold).astype(int)
+
+    missed_voice = int(np.sum((y == 0) & (pred == 1)))
+    wasted_voice = int(np.sum((y == 1) & (pred == 0)))
+    total = float(missed_voice * cost_ratio + wasted_voice)
+    rows = len(y)
+
+    return {
+        "cost_ratio": cost_ratio,
+        "missed_voice": missed_voice,
+        "wasted_voice": wasted_voice,
+        "total_cost": round(total, 2),
+        "cost_per_1000_rows": round(1000.0 * total / rows, 2) if rows else None,
+        "note": (
+            f"A missed Voice is counted as {cost_ratio:g}x a wasted call. "
+            "Lower is better."
+        ),
+    }
+
+
+def disagreement(
+    y_true, champion_proba, challenger_proba, champion_threshold: float,
+    challenger_threshold: float, segments: pd.Series | None = None, top_n: int = 8,
+) -> dict:
+    """Where the two models differ, in which direction, and on what kind of row.
+
+    Turns "2% better overall" into something a person can check against their
+    own knowledge of the work.
+    """
+    y = np.asarray(y_true).astype(int)
+    champ = (np.asarray(champion_proba) >= champion_threshold).astype(int)
+    chall = (np.asarray(challenger_proba) >= challenger_threshold).astype(int)
+
+    differ = champ != chall
+    rows = int(differ.sum())
+    if rows == 0:
+        return {"rows": 0, "pct_of_test": 0.0, "note": "The two models agree on every test row."}
+
+    challenger_right = int(np.sum(differ & (chall == y)))
+    champion_right = int(np.sum(differ & (champ == y)))
+
+    breakdown = None
+    if segments is not None and len(segments) == len(y):
+        frame = pd.DataFrame({
+            "segment": np.asarray(segments).astype(str),
+            "differ": differ,
+            "challenger_right": differ & (chall == y),
+            "champion_right": differ & (champ == y),
+        })
+        grouped = frame.groupby("segment").agg(
+            rows=("differ", "size"),
+            disagreements=("differ", "sum"),
+            challenger_wins=("challenger_right", "sum"),
+            champion_wins=("champion_right", "sum"),
+        ).reset_index()
+        grouped = grouped[grouped["disagreements"] > 0]
+        grouped["net"] = grouped["challenger_wins"] - grouped["champion_wins"]
+        grouped = grouped.sort_values("disagreements", ascending=False).head(top_n)
+        breakdown = [
+            {
+                "segment": r["segment"],
+                "rows": int(r["rows"]),
+                "disagreements": int(r["disagreements"]),
+                "challenger_wins": int(r["challenger_wins"]),
+                "champion_wins": int(r["champion_wins"]),
+                "net": int(r["net"]),
+            }
+            for _, r in grouped.iterrows()
+        ]
+
+    return {
+        "rows": rows,
+        "pct_of_test": round(100.0 * rows / len(y), 2),
+        "challenger_correct": challenger_right,
+        "champion_correct": champion_right,
+        "net_to_challenger": challenger_right - champion_right,
+        "by_segment": breakdown,
+        "note": (
+            f"The models differ on {rows} of {len(y)} test rows. Of those, the challenger is "
+            f"right on {challenger_right} and the champion on {champion_right}."
+        ),
+    }

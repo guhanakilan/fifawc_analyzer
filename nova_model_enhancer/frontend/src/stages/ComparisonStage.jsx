@@ -330,12 +330,17 @@ export default function ComparisonStage({ job, mark, go }) {
               rowKey={(row) => row.model}
             />
 
+            <SignificanceSection comparison={comparison} selected={selected} />
+            <OperatingSection comparison={comparison} selected={selected} />
+            <DisagreementSection comparison={comparison} selected={selected} />
             <PeriodSection comparison={comparison} selected={selected} />
             <SegmentSection comparison={comparison} selected={selected} />
             <BacktestSection backtest={comparison.backtest} />
           </>
         )}
       </Card>
+
+      {comparison?.guidance?.length > 0 && <GuidanceSection guidance={comparison.guidance} />}
 
       {comparison && selected && (
         <Card borderSize={2}>
@@ -644,5 +649,259 @@ function BacktestSection({ backtest }) {
         </div>
       ))}
     </>
+  );
+}
+
+/* ── Item 8 sections ───────────────────────────────────────────────────────
+ *
+ * These answer the questions the headline table cannot: is the difference real,
+ * how does the model behave at a chosen operating point, what do its errors
+ * cost, and exactly where does it differ from the champion.
+ */
+
+function SignificanceSection({ comparison, selected }) {
+  const candidate = comparison.candidates?.[selected];
+  const significance = candidate?.significance;
+  const interval = candidate?.confidence_interval;
+  const cost = candidate?.cost;
+  const championCost = comparison.champion?.cost;
+  if (!significance && !interval) return null;
+
+  const notSignificant = significance && significance.p_value !== null && !significance.significant;
+  const costDelta =
+    cost && championCost ? cost.total_cost - championCost.total_cost : null;
+
+  return (
+    <>
+      <SubHeading>Is the difference real?</SubHeading>
+
+      {notSignificant && (
+        <Notice tone="warn" title="This difference is within what chance would produce">
+          {significance.interpretation}
+        </Notice>
+      )}
+      {significance?.significant && (
+        <Notice tone="ok" title="This difference is statistically significant">
+          {significance.interpretation}
+        </Notice>
+      )}
+
+      <MetricGrid
+        compact
+        min={150}
+        items={[
+          {
+            label: "p-value",
+            value: significance?.p_value != null ? significance.p_value.toFixed(4) : "—",
+            sub: "McNemar, paired rows",
+            color: notSignificant ? "#F59E0B" : C.green,
+          },
+          {
+            label: "Rows they differ on",
+            value: significance ? num(significance.discordant) : "—",
+            sub: significance
+              ? `${significance.challenger_only_correct} challenger · ${significance.champion_only_correct} champion`
+              : undefined,
+          },
+          {
+            label: `${interval?.metric || "metric"} 95% CI`,
+            value: interval?.low != null ? `${interval.low} – ${interval.high}` : "—",
+            sub: interval?.point != null ? `point ${interval.point}` : undefined,
+          },
+          {
+            label: "Cost vs champion",
+            value: costDelta == null ? "—" : `${costDelta > 0 ? "+" : ""}${costDelta.toFixed(0)}`,
+            color: costDelta == null ? C.navy : costDelta > 0 ? "#EF4444" : C.green,
+            sub: cost ? `${cost.cost_ratio}:1 missed-Voice weighting` : undefined,
+          },
+        ]}
+      />
+
+      {cost && championCost && (
+        <Table
+          columns={[
+            { key: "model", header: "Model" },
+            { key: "missed", header: "Missed Voice", className: "num" },
+            { key: "wasted", header: "Wasted Voice", className: "num" },
+            { key: "total", header: "Weighted cost", className: "num" },
+            { key: "per1000", header: "Per 1,000 rows", className: "num" },
+          ]}
+          rows={[
+            {
+              model: `CHAMPION · ${comparison.champion.model_id}`,
+              missed: num(championCost.missed_voice),
+              wasted: num(championCost.wasted_voice),
+              total: num(championCost.total_cost),
+              per1000: num(championCost.cost_per_1000_rows),
+            },
+            {
+              model: selected,
+              missed: num(cost.missed_voice),
+              wasted: num(cost.wasted_voice),
+              total: num(cost.total_cost),
+              per1000: num(cost.cost_per_1000_rows),
+            },
+          ]}
+          rowKey={(row) => row.model}
+        />
+      )}
+      {cost && (
+        <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 6 }}>
+          {cost.note} A missed Voice means the model said Non-Voice for an account that
+          actually needed a call, so the claim stalls.
+        </div>
+      )}
+    </>
+  );
+}
+
+function OperatingSection({ comparison, selected }) {
+  const points = comparison.candidates?.[selected]?.operating_points;
+  const championPoints = comparison.champion?.operating_points;
+  if (!points) return null;
+  if (!points.available) {
+    return (
+      <>
+        <SubHeading>Operating points</SubHeading>
+        <Notice tone="info" title="Not available">{points.reason}</Notice>
+      </>
+    );
+  }
+
+  const row = (label, source) => ({
+    model: label,
+    atRecall: source?.precision_at_recall
+      ? `${source.precision_at_recall.precision} @ thr ${source.precision_at_recall.threshold}`
+      : "not reachable",
+    atPrecision: source?.recall_at_precision
+      ? `${source.recall_at_precision.recall} @ thr ${source.recall_at_precision.threshold}`
+      : "not reachable",
+    lift: source?.top_decile?.lift ?? "—",
+  });
+
+  return (
+    <>
+      <SubHeading>Operating points</SubHeading>
+      <Table
+        columns={[
+          { key: "model", header: "Model" },
+          {
+            key: "atRecall",
+            header: `Precision at recall ≥ ${points.recall_target}`,
+          },
+          {
+            key: "atPrecision",
+            header: `Recall at precision ≥ ${points.precision_target}`,
+          },
+          { key: "lift", header: "Top-decile lift", className: "num" },
+        ]}
+        rows={[
+          row(`CHAMPION · ${comparison.champion.model_id}`, championPoints),
+          row(selected, points),
+        ]}
+        rowKey={(r) => r.model}
+      />
+      <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 6 }}>
+        Top-decile lift is how much richer the highest-scoring 10% of accounts is than the
+        base rate — the prioritisation value, separate from accuracy.
+      </div>
+    </>
+  );
+}
+
+function DisagreementSection({ comparison, selected }) {
+  const detail = comparison.candidates?.[selected]?.disagreement;
+  if (!detail) return null;
+  if (!detail.rows) {
+    return (
+      <>
+        <SubHeading>Where they differ</SubHeading>
+        <Notice tone="info" title="No disagreement">{detail.note}</Notice>
+      </>
+    );
+  }
+
+  const losing = (detail.by_segment || []).filter((s) => s.net < 0);
+
+  return (
+    <>
+      <SubHeading>Where they differ</SubHeading>
+      <MetricGrid
+        compact
+        min={150}
+        items={[
+          { label: "Rows", value: num(detail.rows), sub: `${detail.pct_of_test}% of the test set` },
+          { label: "Challenger right", value: num(detail.challenger_correct) },
+          { label: "Champion right", value: num(detail.champion_correct) },
+          {
+            label: "Net",
+            value: `${detail.net_to_challenger > 0 ? "+" : ""}${detail.net_to_challenger}`,
+            color: detail.net_to_challenger >= 0 ? C.green : "#EF4444",
+          },
+        ]}
+      />
+
+      {losing.length > 0 && (
+        <Notice tone="warn" title={`The challenger is worse on ${losing.length} segment(s)`}>
+          A model that is better overall can still be worse where it matters most:{" "}
+          {losing.map((s) => `${s.segment} (${s.net})`).join(", ")}.
+        </Notice>
+      )}
+
+      {detail.by_segment && (
+        <Table
+          columns={[
+            { key: "segment", header: "Segment" },
+            { key: "rows", header: "Rows", className: "num" },
+            { key: "disagreements", header: "Differ", className: "num" },
+            { key: "challenger_wins", header: "Challenger", className: "num" },
+            { key: "champion_wins", header: "Champion", className: "num" },
+            {
+              key: "net",
+              header: "Net",
+              className: "num",
+              tone: (r) => (r.net > 0 ? "ok" : r.net < 0 ? "bad" : "muted"),
+            },
+          ]}
+          rows={detail.by_segment}
+          rowKey={(r) => r.segment}
+        />
+      )}
+    </>
+  );
+}
+
+const PRIORITY_TONE = { high: "bad", medium: "warn", low: "muted" };
+
+function GuidanceSection({ guidance }) {
+  return (
+    <Card>
+      <SectionTitle sub="Read from this run. Suggestions for the next one — never a recommendation to promote, which stays your decision behind the gate.">
+        What would help next
+      </SectionTitle>
+      {guidance.map((item) => (
+        <div
+          key={item.title}
+          style={{
+            border: "1px solid var(--nova-input-border)",
+            borderRadius: 8,
+            padding: "11px 13px",
+            marginBottom: 9,
+            background: "var(--nova-input-bg)",
+          }}
+        >
+          <div style={{ display: "flex", gap: 9, alignItems: "center", flexWrap: "wrap" }}>
+            <Pill tone={PRIORITY_TONE[item.priority] || "muted"}>{item.priority}</Pill>
+            <span style={{ fontWeight: 700, fontSize: 12.5 }}>{item.title}</span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 12, color: "var(--nova-grey-dim)" }}>
+            {item.why}
+          </div>
+          <div style={{ marginTop: 5, fontSize: 12 }}>
+            <strong>Try:</strong> {item.action}
+          </div>
+        </div>
+      ))}
+    </Card>
   );
 }
