@@ -69,7 +69,7 @@ def reference_scoring_path() -> Path | None:
     return None
 
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 PIPELINE_VERSION = 2   # matches nova-ml pipeline_version.json (bucket/grouping included)
 
 

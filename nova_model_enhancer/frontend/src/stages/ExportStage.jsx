@@ -164,6 +164,12 @@ export default function ExportStage({ job, operator }) {
                 />
                 <span>
                   <strong style={{ color: "var(--nova-header-text)" }}>{convention.label}</strong>
+                  {convention.recommended && (
+                    <>
+                      {" "}
+                      <Badge small>confirmed convention</Badge>
+                    </>
+                  )}
                   <div style={{ fontSize: 11.5, color: "var(--nova-grey-dim)", marginTop: 2 }}>
                     {convention.voice_value} = Voice, {convention.non_voice_value} = Non-Voice ·{" "}
                     {convention.note}

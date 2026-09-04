@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.1 — ml_tag convention confirmed
+
+`ml_tag` is **1 = Voice, 0 = Non-Voice**, confirmed by the project owner. That is
+inverted from the internal `NonVoiceFlag` target (0 = Voice, 1 = Non-Voice) and matches
+the `VoiceNonVoiceFlag` the reference scoring client already appends, so the two agree.
+
+Stage 7 now marks it as the confirmed convention rather than offering two equal
+unknowns. The approval gate stays: a named approver still confirms it per job, because
+getting it backwards inverts every routing decision downstream and nothing inside a
+package records which way round it is.
+
+A test pins the value and checks it end to end through the shipped runtime — a row the
+model scores as Voice comes out carrying `ml_tag = 1`.
+
+
 ## 1.3.0 — champion parity and the escalating retrain loop
 
 ### Same and only the champion's pipeline

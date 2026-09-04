@@ -46,22 +46,31 @@ def ml_tag(job_id: str):
         "approved_by": saved["approver"] if saved else None,
         "blocked": saved is None,
         "decision_required": (
-            "The reference scoring client appends VoiceNonVoiceFlag with 1 = Voice and "
-            "0 = Non-Voice, inverted from the internal NonVoiceFlag target (0 = Voice, "
-            "1 = Non-Voice). No source in the supplied material states the ml_tag "
-            "convention, so it must be confirmed by an authorised approver. Export is "
-            "blocked until it is."
+            "ml_tag is 1 = Voice, 0 = Non-Voice — confirmed by the project owner. That is "
+            "inverted from the internal NonVoiceFlag target (0 = Voice, 1 = Non-Voice) and "
+            "matches the VoiceNonVoiceFlag the reference scoring client already appends. "
+            "It still requires a named approver per job, because getting it backwards "
+            "inverts every routing decision downstream and nothing in the package itself "
+            "records the convention."
         ),
         "candidate_conventions": [
             {
-                "label": "Match VoiceNonVoiceFlag (inverted from the training target)",
+                "label": "1 = Voice, 0 = Non-Voice",
                 "column_name": "ml_tag", "voice_value": 1, "non_voice_value": 0,
-                "note": "Consistent with what the reference loader already appends.",
+                "recommended": True,
+                "note": (
+                    "The confirmed convention. Matches the VoiceNonVoiceFlag the reference "
+                    "loader appends, and is inverted from the training target."
+                ),
             },
             {
-                "label": "Match the internal NonVoiceFlag target",
+                "label": "0 = Voice, 1 = Non-Voice",
                 "column_name": "ml_tag", "voice_value": 0, "non_voice_value": 1,
-                "note": "Consistent with training, inverted relative to the reference loader.",
+                "recommended": False,
+                "note": (
+                    "Matches the internal NonVoiceFlag target. Offered only so the "
+                    "inversion is visible; this is NOT the confirmed convention."
+                ),
             },
         ],
     }
